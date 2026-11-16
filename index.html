@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Pitch Score</title>
-<meta name="description" content="Game scores for every MLB start by the pitchers you follow.">
+<meta name="description" content="Game scores for every MLB start and relief outing by the pitchers you follow.">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Pitch Score">
@@ -180,6 +180,11 @@ td.sc .pill { margin-left: 6px; }
 .ctable td:first-child i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 7px; vertical-align: 0; }
 footer { font-size: 12px; color: var(--muted); }
 @media (prefers-reduced-motion: no-preference) { .row, tbody tr.g { transition: background .12s; } }
+.roletabs { margin-bottom: 2px; }
+.roletabs a { display: inline-block; padding: 6px 14px; font-size: 13px; text-decoration: none; color: var(--fg); background: var(--surface); }
+.roletabs a[aria-current="page"] { background: var(--accent); color: var(--bg); }
+.sit { white-space: nowrap; }
+.sit.hot { color: var(--accent); font-weight: 600; }
 </style>
 </head>
 <body>
@@ -188,32 +193,40 @@ footer { font-size: 12px; color: var(--muted); }
     <a class="brand" href="#">Pitch<span>Score</span></a>
     <span class="season" id="season"></span>
     <span class="spacer"></span>
-    <a class="btn" href="#compare">Compare</a>
+    <a class="btn" href="#compare" id="cmplink">Compare</a>
     <a class="btn" href="#formula">Scoring</a>
     <button class="btn" id="refresh" type="button">Refresh</button>
   </header>
   <div class="status" id="status" role="status"></div>
   <main id="view"></main>
-  <footer>Data from the MLB Stats API. Starts only, regular season and postseason.</footer>
+  <footer>Data from the MLB Stats API. Regular season and postseason.</footer>
 </div>
 
 <script>
 "use strict";
 const SEASON = 2026;
 const API = "https://statsapi.mlb.com/api/v1";
-const DEFAULT_PITCHERS = [
-  { id: 808967, name: "Yoshinobu Yamamoto" },
-  { id: 837227, name: "Tatsuya Imai" },
-  { id: 684007, name: "Shota Imanaga" },
-  { id: 673540, name: "Kodai Senga" },
-  { id: 608372, name: "Tomoyuki Sugano" },
-];
+const DEFAULTS = {
+  sp: [
+    { id: 808967, name: "Yoshinobu Yamamoto" },
+    { id: 837227, name: "Tatsuya Imai" },
+    { id: 684007, name: "Shota Imanaga" },
+    { id: 673540, name: "Kodai Senga" },
+    { id: 608372, name: "Tomoyuki Sugano" },
+  ],
+  rp: [
+    { id: 623352, name: "Josh Hader" },
+    { id: 695243, name: "Mason Miller" },
+    { id: 686973, name: "Louis Varland" },
+    { id: 673513, name: "Yuki Matsui" },
+  ],
+};
 
-/* ---------- scoring ---------- */
+/* ---------- scoring: starters ---------- */
 const W = { base: 40, out: 2, k: 1, h: -2, bb: -3, hbp: -3, er: -4, solo: -6, multi: -8 };
-function scoreParts(g) {
-  const parts = [
-    ["Start", W.base],
+function startParts(g) {
+  return [
+    [g.lr ? "Long relief (scored as a start)" : "Start", W.base],
     [`${g.outs} outs`, W.out * g.outs],
     [`${g.k} K`, W.k * g.k],
     [`${g.h} H`, W.h * g.h],
@@ -223,11 +236,46 @@ function scoreParts(g) {
     [`${g.solo} solo HR`, W.solo * g.solo],
     [`${g.multi} multi-run HR`, W.multi * g.multi],
   ];
-  return parts;
 }
-function score(g) { return scoreParts(g).reduce((s, p) => s + p[1], 0); }
 
-/* Tiers set from all 4,858 MLB starts in the 2026 regular season (average start = 45). */
+/* ---------- scoring: relievers ---------- */
+const RW = { base: 40, out: 3, k: 1, h: -2, bb: -3, hbp: -3, er: -6, solo: -8, multi: -10,
+  irs: -3, irStr: 2, sv: 10, hld: 6, bs: -10, inn: 2, xi: 5, perfect: 8 };
+const LATE = 7;                          // close-game bonus starts in this inning
+const CLOSE = { 0: 8, 1: 8, 2: 5 };      // lead when they enter -> bonus
+const ord = n => n + (n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] || "th");
+const leadTxt = l => l > 0 ? `up ${l}` : l === 0 ? "tied" : `down ${-l}`;
+const sitTxt = g => g.inn ? `${ord(g.inn)}, ${leadTxt(g.lead)}` : "–";
+const closeEntry = g => g.inn >= LATE && g.lead in CLOSE;
+const isClean = g => g.r === 0 && g.irs === 0;
+function reliefParts(g) {
+  const extraInn = Math.max(0, Math.floor(g.outs / 3) - 1);
+  const stranded = g.ir - g.irs;
+  const perfect = g.outs >= 3 && g.h + g.bb + g.hbp === 0;
+  return [
+    ["Relief appearance", RW.base],
+    [`${g.outs} outs`, RW.out * g.outs],
+    [`${g.k} K`, RW.k * g.k],
+    [`${g.h} H`, RW.h * g.h],
+    [`${g.bb} BB`, RW.bb * g.bb],
+    [`${g.hbp} HBP`, RW.hbp * g.hbp],
+    [`${g.er} ER`, RW.er * g.er],
+    [`${g.solo} solo HR`, RW.solo * g.solo],
+    [`${g.multi} multi-run HR`, RW.multi * g.multi],
+    [`${g.irs} inherited runner${g.irs === 1 ? "" : "s"} scored`, RW.irs * g.irs],
+    [`${stranded} inherited runner${stranded === 1 ? "" : "s"} stranded`, RW.irStr * stranded],
+    ["Save", RW.sv * g.sv],
+    ["Hold", RW.hld * g.hld],
+    ["Blown save", RW.bs * g.bs],
+    [`${extraInn} extra full inning${extraInn === 1 ? "" : "s"}`, RW.inn * extraInn],
+    ["Pitched in extra innings", RW.xi * g.xi],
+    ["No baserunners", perfect ? RW.perfect : 0],
+    [`Close game: entered ${sitTxt(g)}, no runs scored`, closeEntry(g) && isClean(g) ? CLOSE[g.lead] : 0],
+  ];
+}
+const total = parts => parts.reduce((s, p) => s + p[1], 0);
+
+/* Starter tiers: all 4,858 MLB starts in the 2026 regular season (average start = 45). */
 const TIERS = [
   { min: 85, name: "Elite", v: "--t-elite", share: "1%", ex: "8 IP, 2 H, 0 ER, 0 BB, 10 K" },
   { min: 70, name: "Great", v: "--t-great", share: "10%", ex: "7 IP, 3 H, 0 ER, 1 BB, 7 K" },
@@ -237,9 +285,26 @@ const TIERS = [
   { min: 10, name: "Poor", v: "--t-poor", share: "10%", ex: "4 IP, 7 H, 5 ER, 2 BB, 3 K" },
   { min: -Infinity, name: "Disastrous", v: "--t-dis", share: "6%", ex: "3.2 IP, 7 H, 7 ER, 2 BB, 3 K, 2 HR" },
 ];
-const tier = s => TIERS.find(t => s >= t.min);
-const pill = s => { const t = tier(s); return `<span class="pill" style="--t:var(${t.v})">${t.name}</span>`; };
-const tierColor = s => `var(${tier(s).v})`;
+/* Relief tiers: all 15,699 MLB relief outings in the 2026 regular season. */
+const RTIERS = [
+  { min: 80, name: "Elite", v: "--t-elite", share: "under 1%", ex: "Enters 9th up 1: 4-out save, perfect, 3 K (81)" },
+  { min: 70, name: "Great", v: "--t-great", share: "6%", ex: "Enters 9th up 1: perfect, 2 K, save (77)" },
+  { min: 60, name: "Good", v: "--t-good", share: "15%", ex: "Enters 9th up 1: 1 H, 1 K, save (66)" },
+  { min: 45, name: "Average", v: "--t-avg", share: "46%", ex: "Perfect inning, 1 K, game not close (58)" },
+  { min: 35, name: "Below Avg", v: "--t-below", share: "14%", ex: "1 IP, 1 H, 1 BB, 1 ER, 1 K (39)" },
+  { min: 20, name: "Poor", v: "--t-poor", share: "11%", ex: "1 IP, 2 H, 1 BB, 2 ER, 1 K (31)" },
+  { min: -Infinity, name: "Disastrous", v: "--t-dis", share: "7%", ex: "1 out, 3 H, 3 ER, solo HR (11)" },
+];
+
+const ROLES = {
+  sp: { key: "starts", T: TIERS, good: 55, roll: 5, store: "ps:pitchers", page: "p", cmp: "compare",
+        title: "Starters", one: "start", many: "starts", rollTxt: "5-start average", label: "starter" },
+  rp: { key: "relief", T: RTIERS, good: 60, roll: 10, store: "ps:relievers", page: "r", cmp: "compare-rp",
+        title: "Relievers", one: "outing", many: "relief outings", rollTxt: "10-outing average", label: "reliever" },
+};
+const tier = (s, T = TIERS) => T.find(t => s >= t.min);
+const pill = (s, T) => { const t = tier(s, T); return `<span class="pill" style="--t:var(${t.v})">${t.name}</span>`; };
+const tierColor = (s, T) => `var(${tier(s, T).v})`;
 
 /* ---------- storage (best effort) ---------- */
 function load(key, fallback) {
@@ -247,10 +312,14 @@ function load(key, fallback) {
 }
 function save(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} }
 
-let pitchers = load("ps:pitchers", null) || DEFAULT_PITCHERS.slice();
-const hrCache = load("ps:hr", {});           // "gamePk:pitcherId" -> {solo, multi}
-const logCache = load("ps:logs:" + SEASON, {}); // pitcherId -> {team, starts:[...], at}
-let teams = load("ps:teams", null);           // id -> abbreviation
+const lists = { sp: load("ps:pitchers", null) || DEFAULTS.sp.slice(), rp: load("ps:relievers", null) || DEFAULTS.rp.slice() };
+const hrCache = load("ps:hr", {});             // "gamePk:pitcherId" -> {solo, multi}
+const ctxCache = load("ps:ctx", {});           // "gamePk:pitcherId" -> {solo, multi, inn, lead, xi}
+const logCache = load("ps:logs2:" + SEASON, {}); // pitcherId -> {team, starts:[...], relief:[...], at}
+let teams = load("ps:teams", null);             // id -> abbreviation
+try { localStorage.removeItem("ps:logs:" + SEASON); } catch {}
+function saveList(role) { save(ROLES[role].store, lists[role]); }
+const allIds = () => [...new Map([...lists.sp, ...lists.rp].map(p => [p.id, p])).values()];
 
 /* ---------- fetching ---------- */
 async function getJSON(url) {
@@ -266,21 +335,48 @@ async function loadTeams() {
   save("ps:teams", teams);
 }
 function abbr(t) { return (teams && teams[t.id]) || (t.name || "").split(" ").pop(); }
+const todayISO = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 
-async function hrSplit(gamePk, pid, total) {
-  const key = gamePk + ":" + pid;
+function fixHR(solo, multi, total) {
+  if (solo + multi !== total) { solo = Math.min(solo, total); multi = total - solo; }
+  return { solo, multi };
+}
+async function hrSplit(g, pid) {
+  const key = g.pk + ":" + pid;
   if (hrCache[key]) return hrCache[key];
-  const d = await getJSON(`${API}/game/${gamePk}/playByPlay?fields=allPlays,result,eventType,rbi,matchup,pitcher,id`);
+  const d = await getJSON(`${API}/game/${g.pk}/playByPlay?fields=allPlays,result,eventType,rbi,matchup,pitcher,id`);
   let solo = 0, multi = 0;
   for (const p of d.allPlays || []) {
     if (p.matchup && p.matchup.pitcher && p.matchup.pitcher.id === pid && p.result && p.result.eventType === "home_run") {
       if (p.result.rbi > 1) multi++; else solo++;
     }
   }
-  if (solo + multi !== total) { solo = Math.min(solo, total); multi = total - solo; }
-  const v = { solo, multi };
-  hrCache[key] = v;
-  save("ps:hr", hrCache);
+  const v = fixHR(solo, multi, g.hr);
+  if (g.date < todayISO()) { hrCache[key] = v; save("ps:hr", hrCache); }
+  return v;
+}
+/* One play-by-play read per relief outing: the inning and score when they came in,
+   whether they pitched in extra innings, and which home runs were solo. */
+async function reliefCtx(g, pid) {
+  const key = g.pk + ":" + pid;
+  if (ctxCache[key]) return ctxCache[key];
+  const d = await getJSON(`${API}/game/${g.pk}/playByPlay?fields=allPlays,result,eventType,rbi,awayScore,homeScore,about,inning,isTopInning,matchup,pitcher,id`);
+  let prev = [0, 0], inn = 0, lead = null, xi = 0, solo = 0, multi = 0;
+  for (const p of d.allPlays || []) {
+    const r = p.result || {};
+    if (p.matchup && p.matchup.pitcher && p.matchup.pitcher.id === pid) {
+      if (!inn) {
+        inn = p.about.inning;
+        const [a, h] = prev;
+        lead = p.about.isTopInning ? h - a : a - h;   // top of the inning: home team is pitching
+      }
+      if (p.about.inning >= 10) xi = 1;
+      if (r.eventType === "home_run") { if (r.rbi > 1) multi++; else solo++; }
+    }
+    prev = [r.awayScore ?? prev[0], r.homeScore ?? prev[1]];
+  }
+  const v = { ...fixHR(solo, multi, g.hr), inn, lead, xi };
+  if (g.date < todayISO()) { ctxCache[key] = v; save("ps:ctx", ctxCache); }
   return v;
 }
 
@@ -298,28 +394,45 @@ async function fetchPitcher(pid) {
   const splits = [];
   for (const d of [reg, post]) if (d.stats && d.stats[0]) splits.push(...d.stats[0].splits);
   let team = "";
-  const starts = [];
+  const starts = [], relief = [];
   for (const s of splits) {
     const st = s.stat;
-    if (st.gamesStarted !== 1) continue;
     team = s.team ? abbr(s.team) : team;
-    starts.push({
+    const g = {
       pk: s.game.gamePk, date: s.date, post: s.gameType !== "R",
       opp: abbr(s.opponent), home: s.isHome,
-      dec: st.wins ? "W" : st.losses ? "L" : "ND",
       ip: st.inningsPitched, outs: st.outs, h: st.hits, bb: st.baseOnBalls, hbp: st.hitBatsmen,
       er: st.earnedRuns, r: st.runs, k: st.strikeOuts, hr: st.homeRuns, solo: 0, multi: 0, hrKnown: st.homeRuns === 0,
-    });
+    };
+    const sv = st.saves || 0, hld = st.holds || 0, bs = st.blownSaves || 0;
+    if (st.gamesStarted === 1 || (st.outs >= 12 && !sv && !hld)) {
+      g.lr = st.gamesStarted !== 1;
+      g.dec = st.wins ? "W" : st.losses ? "L" : "ND";
+      starts.push(g);
+    } else {
+      Object.assign(g, { ir: st.inheritedRunners || 0, irs: st.inheritedRunnersScored || 0, sv, hld, bs,
+        inn: 0, lead: null, xi: 0, ctxKnown: false });
+      g.dec = [bs ? "BS" : "", sv ? "SV" : "", hld ? "HLD" : "", st.wins ? "W" : "", st.losses ? "L" : ""].filter(Boolean).join(", ") || "–";
+      relief.push(g);
+    }
   }
   starts.sort((a, b) => a.date.localeCompare(b.date));
-  await pool(starts.filter(g => g.hr > 0), 4, async g => {
-    try { const v = await hrSplit(g.pk, pid, g.hr); g.solo = v.solo; g.multi = v.multi; g.hrKnown = true; }
-    catch { g.solo = 0; g.multi = g.hr; g.hrKnown = false; }
-  });
-  for (const g of starts) g.score = score(g);
-  const rec = { team, starts, at: Date.now() };
+  relief.sort((a, b) => a.date.localeCompare(b.date));
+  await Promise.all([
+    pool(starts.filter(g => g.hr > 0), 3, async g => {
+      try { Object.assign(g, await hrSplit(g, pid)); g.hrKnown = true; }
+      catch { g.solo = 0; g.multi = g.hr; }
+    }),
+    pool(relief, 4, async g => {
+      try { Object.assign(g, await reliefCtx(g, pid)); g.hrKnown = true; g.ctxKnown = true; }
+      catch { g.solo = 0; g.multi = g.hr; }
+    }),
+  ]);
+  for (const g of starts) g.score = total(startParts(g));
+  for (const g of relief) g.score = total(reliefParts(g));
+  const rec = { team, starts, relief, at: Date.now() };
   logCache[pid] = rec;
-  save("ps:logs:" + SEASON, logCache);
+  save("ps:logs2:" + SEASON, logCache);
   return rec;
 }
 
@@ -331,7 +444,12 @@ function median(a) { if (!a.length) return NaN; const s = a.slice().sort((x, y) 
 const fmt1 = x => isNaN(x) ? "–" : x.toFixed(1);
 function fmtDate(d) { const [y, m, day] = d.split("-").map(Number); return new Date(y, m - 1, day).toLocaleDateString(undefined, { month: "short", day: "numeric" }); }
 function setStatus(msg, err) { const el = $("#status"); el.textContent = msg || ""; el.classList.toggle("err", !!err); }
-function savePitchers() { save("ps:pitchers", pitchers); }
+const games = (pid, role) => (logCache[pid] && logCache[pid][ROLES[role].key]) || [];
+
+function roleTabs(role, hashFor) {
+  return `<nav class="seg roletabs" aria-label="Pitcher type">${["sp", "rp"].map(r =>
+    `<a href="#${hashFor(r)}" ${r === role ? 'aria-current="page"' : ""}>${ROLES[r].title}</a>`).join("")}</nav>`;
+}
 
 function sparkline(scores) {
   if (!scores.length) return "";
@@ -347,9 +465,9 @@ function sparkline(scores) {
 }
 
 /* Horizontal lines at each tier cutoff, labelled on the left. */
-function tierGrid(y, lo, hi, x1, x2) {
+function tierGrid(y, lo, hi, x1, x2, T) {
   let s = "";
-  const marks = [0, ...TIERS.map(t => t.min).filter(m => isFinite(m) && m !== 0)];
+  const marks = [0, ...T.map(t => t.min).filter(m => isFinite(m) && m !== 0)];
   for (const m of marks) {
     if (m < lo || m > hi) continue;
     s += `<line x1="${x1}" x2="${x2}" y1="${y(m)}" y2="${y(m)}" stroke="var(--line)" ${m === 0 ? "" : 'stroke-dasharray="3 3"'}/>`;
@@ -358,64 +476,68 @@ function tierGrid(y, lo, hi, x1, x2) {
   return s;
 }
 
-function chart(starts) {
-  const n = starts.length, W2 = 700, H = 220, padL = 30, padR = 8, padT = 10, padB = 22;
-  const scores = starts.map(g => g.score);
+function chart(gs, role) {
+  const T = ROLES[role].T;
+  const n = gs.length, W2 = 700, H = 220, padL = 30, padR = 8, padT = 10, padB = 22;
+  const scores = gs.map(g => g.score);
   const lo = Math.min(0, Math.floor(Math.min(...scores) / 25) * 25);
   const hi = Math.max(100, Math.ceil(Math.max(...scores) / 25) * 25);
   const y = v => padT + (hi - v) / (hi - lo) * (H - padT - padB);
   const bw = (W2 - padL - padR) / n;
-  let s = `<svg viewBox="0 0 ${W2} ${H}" role="img" aria-label="Score for each start this season">`;
-  s += tierGrid(y, lo, hi, padL, W2 - padR);
-  starts.forEach((g, i) => {
+  let s = `<svg viewBox="0 0 ${W2} ${H}" role="img" aria-label="Score for each ${ROLES[role].one} this season">`;
+  s += tierGrid(y, lo, hi, padL, W2 - padR, T);
+  gs.forEach((g, i) => {
     const x = padL + i * bw + bw * 0.15, w = bw * 0.7;
     const top = y(Math.max(0, g.score)), bot = y(Math.min(0, g.score));
-    s += `<rect x="${x.toFixed(1)}" y="${top.toFixed(1)}" width="${w.toFixed(1)}" height="${Math.max(1, bot - top).toFixed(1)}" rx="2" fill="${tierColor(g.score)}"><title>${esc(fmtDate(g.date))} vs ${esc(g.opp)}: ${g.score} (${tier(g.score).name})</title></rect>`;
+    s += `<rect x="${x.toFixed(1)}" y="${top.toFixed(1)}" width="${w.toFixed(1)}" height="${Math.max(1, bot - top).toFixed(1)}" rx="${Math.min(2, w / 3).toFixed(1)}" fill="${tierColor(g.score, T)}"><title>${esc(fmtDate(g.date))} vs ${esc(g.opp)}: ${g.score} (${tier(g.score, T).name})</title></rect>`;
     if (g.post) s += `<circle cx="${(x + w / 2).toFixed(1)}" cy="${(top - 6).toFixed(1)}" r="3" fill="var(--post)"/>`;
   });
   const avg = mean(scores);
   s += `<line x1="${padL}" x2="${W2 - padR}" y1="${y(avg)}" y2="${y(avg)}" stroke="var(--fg)" stroke-width="1.2"/>`;
   s += `<text x="${W2 - padR}" y="${y(avg) - 5}" text-anchor="end" font-size="11" fill="var(--fg)">avg ${fmt1(avg)}</text>`;
-  const first = starts[0], lastG = starts[n - 1];
-  s += `<text x="${padL}" y="${H - 6}" font-size="11" fill="var(--muted)">${esc(fmtDate(first.date))}</text>`;
-  s += `<text x="${W2 - padR}" y="${H - 6}" text-anchor="end" font-size="11" fill="var(--muted)">${esc(fmtDate(lastG.date))}</text>`;
+  s += `<text x="${padL}" y="${H - 6}" font-size="11" fill="var(--muted)">${esc(fmtDate(gs[0].date))}</text>`;
+  s += `<text x="${W2 - padR}" y="${H - 6}" text-anchor="end" font-size="11" fill="var(--muted)">${esc(fmtDate(gs[n - 1].date))}</text>`;
   return s + "</svg>";
 }
 
 /* ---------- views ---------- */
-function viewHome() {
-  const rows = pitchers.map(p => {
+let curRole = "sp";
+function viewHome(role) {
+  const R = ROLES[role];
+  const rows = lists[role].map(p => {
     const rec = logCache[p.id];
-    const sc = rec ? rec.starts.map(g => g.score) : [];
-    return { p, rec, sc, avg: mean(sc) };
+    const gs = games(p.id, role);
+    const sc = gs.map(g => g.score);
+    return { p, rec, gs, sc, avg: mean(sc) };
   }).sort((a, b) => (isNaN(b.avg) ? -1e9 : b.avg) - (isNaN(a.avg) ? -1e9 : a.avg));
 
   let html = `<section style="display:flex;flex-direction:column;gap:12px">
-    <h1>Pitchers you follow</h1>
+    ${roleTabs(role, r => r === "sp" ? "" : "rp")}
+    <h1>${R.title} you follow</h1>
     <div class="board">`;
-  if (!rows.length) html += `<div class="empty">No pitchers yet. Search for one below to start tracking.</div>`;
+  if (!rows.length) html += `<div class="empty">No ${R.title.toLowerCase()} yet. Search for one below to start tracking.</div>`;
   rows.forEach((r, i) => {
-    const last = r.rec && r.rec.starts.length ? r.rec.starts[r.rec.starts.length - 1] : null;
-    const sub = r.rec ? `${esc(r.rec.team || "")} · ${r.sc.length} starts${last ? ` · last ${last.score} (${esc(fmtDate(last.date))})` : ""}` : "Loading…";
-    html += `<a class="row" href="#p-${r.p.id}">
+    const last = r.gs.length ? r.gs[r.gs.length - 1] : null;
+    const sub = r.rec ? `${esc(r.rec.team || "")} · ${r.sc.length} ${r.sc.length === 1 ? R.one : R.many}${last ? ` · last ${last.score} (${esc(fmtDate(last.date))})` : ""}` : "Loading…";
+    html += `<a class="row" href="#${R.page}-${r.p.id}">
       <span class="rank num">${isNaN(r.avg) ? "–" : i + 1}</span>
       <span class="who"><div class="nm">${esc(r.p.name)}</div><div class="sub num">${sub}</div></span>
       ${sparkline(r.sc)}
-      <span class="avg"><div class="v num">${fmt1(r.avg)}</div><div class="k">${isNaN(r.avg) ? "avg" : `<span style="color:${tierColor(r.avg)}">${tier(r.avg).name}</span>`}</div></span>
+      <span class="avg"><div class="v num">${fmt1(r.avg)}</div><div class="k">${isNaN(r.avg) ? "avg" : `<span style="color:${tierColor(r.avg, R.T)}">${tier(r.avg, R.T).name}</span>`}</div></span>
     </a>`;
   });
   html += `</div></section>
   <section class="add" style="display:flex;flex-direction:column;gap:6px">
-    <label class="label" for="q">Add a pitcher</label>
+    <label class="label" for="q">Add a ${R.label}</label>
     <input id="q" type="search" placeholder="Search MLB pitchers by name" autocomplete="off">
     <ul class="results" id="results" hidden></ul>
   </section>`;
   $("#view").innerHTML = html;
   let timer;
-  $("#q").addEventListener("input", e => { clearTimeout(timer); const q = e.target.value.trim(); timer = setTimeout(() => search(q), 300); });
+  $("#q").addEventListener("input", e => { clearTimeout(timer); const q = e.target.value.trim(); timer = setTimeout(() => search(q, role), 300); });
 }
 
-async function search(q) {
+async function search(q, role) {
   const ul = $("#results");
   if (!ul) return;
   if (q.length < 2) { ul.hidden = true; return; }
@@ -424,7 +546,7 @@ async function search(q) {
     const ps = (d.people || []).filter(p => p.primaryPosition && ["P", "TWP"].includes(p.primaryPosition.abbreviation));
     if (!ps.length) { ul.innerHTML = `<li><span class="nm sub">No MLB pitchers match "${esc(q)}".</span></li>`; ul.hidden = false; return; }
     ul.innerHTML = ps.slice(0, 8).map(p => {
-      const have = pitchers.some(x => x.id === p.id);
+      const have = lists[role].some(x => x.id === p.id);
       const team = p.currentTeam && p.currentTeam.id ? abbr(p.currentTeam) : (p.active ? "" : "inactive");
       return `<li><span class="nm">${esc(p.fullName)} <span class="sub">${esc(team)}</span></span>
         ${have ? `<span class="sub">Following</span>` : `<button class="btn primary" type="button" data-id="${p.id}" data-name="${esc(p.fullName)}">Follow</button>`}</li>`;
@@ -432,56 +554,87 @@ async function search(q) {
     ul.hidden = false;
     ul.querySelectorAll("button[data-id]").forEach(b => b.addEventListener("click", async () => {
       const id = Number(b.dataset.id);
-      pitchers.push({ id, name: b.dataset.name });
-      savePitchers();
+      lists[role].push({ id, name: b.dataset.name });
+      saveList(role);
       setStatus(`Loading ${b.dataset.name}…`);
-      viewHome();
+      viewHome(role);
       try { await fetchPitcher(id); setStatus(""); } catch (e) { setStatus(e.message, true); }
       route();
     }));
   } catch (e) { setStatus("Search failed. Check your connection and try again.", true); }
 }
 
-function viewPitcher(pid) {
-  const p = pitchers.find(x => x.id === pid);
+function breakdownHTML(parts, score) {
+  return `<div class="breakdown">${parts.filter((pt, i) => i === 0 || pt[1] !== 0)
+    .map(([k, v]) => `<div><span>${esc(k)}</span><span class="${v >= 0 ? "p" : "m"}">${v > 0 ? "+" : ""}${v}</span></div>`).join("")
+    }<div class="tot"><span>Score</span><span>${score}</span></div></div>`;
+}
+const note = t => `<div class="note" style="margin-top:6px">${t}</div>`;
+function hrCell(g) {
+  return g.hr ? `${g.hr}<span class="note"> (${[g.solo ? g.solo + " solo" : "", g.multi ? g.multi + " multi" : ""].filter(Boolean).join(", ")}${g.hrKnown ? "" : "?"})</span>` : "0";
+}
+
+function viewPitcher(pid, role) {
+  const R = ROLES[role], T = R.T;
+  const p = lists[role].find(x => x.id === pid);
   const rec = logCache[pid];
-  if (!p) { $("#view").innerHTML = `<div class="empty">You don't follow this pitcher. <a href="#">Back to your list</a></div>`; return; }
+  const back = `<div class="crumbs"><a href="#${role === "sp" ? "" : "rp"}">← All ${R.title.toLowerCase()}</a></div>`;
+  if (!p) { $("#view").innerHTML = `<div class="empty">You don't follow this ${R.label}. <a href="#${role === "sp" ? "" : "rp"}">Back to your list</a></div>`; return; }
   if (!rec) { $("#view").innerHTML = `<div class="empty">Loading ${esc(p.name)}…</div>`; return; }
-  const st = rec.starts, sc = st.map(g => g.score);
-  const best = st.length ? st.reduce((a, b) => b.score > a.score ? b : a) : null;
-  const worst = st.length ? st.reduce((a, b) => b.score < a.score ? b : a) : null;
-  let html = `<section style="display:flex;flex-direction:column;gap:16px">
-    <div class="crumbs"><a href="#">← All pitchers</a></div>
-    <div><h1>${esc(p.name)}</h1><div class="sub" style="color:var(--muted)">${esc(rec.team)} · ${SEASON} starts</div></div>`;
-  if (!st.length) {
-    html += `<div class="empty">No ${SEASON} MLB starts yet.</div>`;
+  const gs = rec[R.key] || [], sc = gs.map(g => g.score);
+  let html = `<section style="display:flex;flex-direction:column;gap:16px">${back}
+    <div><h1>${esc(p.name)}</h1><div class="sub" style="color:var(--muted)">${esc(rec.team)} · ${SEASON} ${R.many}</div></div>`;
+  if (!gs.length) {
+    html += `<div class="empty">No ${SEASON} MLB ${R.many} yet.</div>`;
   } else {
+    const best = Math.max(...sc), worst = Math.min(...sc);
+    const extra = role === "rp"
+      ? `<div class="fact"><div class="label">Saves / holds</div><div class="v num">${gs.reduce((a, g) => a + g.sv, 0)} / ${gs.reduce((a, g) => a + g.hld, 0)}</div></div>`
+      : "";
     html += `<div class="facts">
-      <div class="fact"><div class="label">Starts</div><div class="v num">${st.length}</div></div>
+      <div class="fact"><div class="label">${role === "sp" ? "Starts" : "Outings"}</div><div class="v num">${gs.length}</div></div>
       <div class="fact"><div class="label">Average</div><div class="v num">${fmt1(mean(sc))}</div></div>
       <div class="fact"><div class="label">Median</div><div class="v num">${fmt1(median(sc))}</div></div>
-      <div class="fact"><div class="label">Best</div><div class="v num">${best.score}</div></div>
-      <div class="fact"><div class="label">Worst</div><div class="v num">${worst.score}</div></div>
-      <div class="fact"><div class="label">Good or better</div><div class="v num">${Math.round(100 * st.filter(g => g.score >= 55).length / st.length)}%</div></div>
+      <div class="fact"><div class="label">Best</div><div class="v num">${best}</div></div>
+      <div class="fact"><div class="label">Worst</div><div class="v num">${worst}</div></div>
+      <div class="fact"><div class="label">Good or better</div><div class="v num">${Math.round(100 * sc.filter(v => v >= R.good).length / sc.length)}%</div></div>
+      ${extra}
     </div>
-    <div class="chartbox">${chart(st)}
-      <div class="legend">${TIERS.map(t => `<span><i style="background:var(${t.v})"></i>${t.name}</span>`).join("")}${st.some(g => g.post) ? `<span><i style="background:var(--post);border-radius:50%"></i>Postseason</span>` : ""}</div>
+    <div class="chartbox">${chart(gs, role)}
+      <div class="legend">${T.map(t => `<span><i style="background:var(${t.v})"></i>${t.name}</span>`).join("")}${gs.some(g => g.post) ? `<span><i style="background:var(--post);border-radius:50%"></i>Postseason</span>` : ""}</div>
     </div>
-    <div class="note">Tap a start to see where its points came from.</div>
-    <div class="tablewrap"><table>
-      <thead><tr><th>Date</th><th>Opp</th><th>Dec</th><th>IP</th><th>H</th><th>BB</th><th>HBP</th><th>ER</th><th>K</th><th>HR</th><th>Score</th></tr></thead>
-      <tbody>`;
-    st.slice().reverse().forEach(g => {
-      const hrTxt = g.hr ? `${g.hr}<span class="note"> (${[g.solo ? g.solo + " solo" : "", g.multi ? g.multi + " multi" : ""].filter(Boolean).join(", ")}${g.hrKnown ? "" : "?"})</span>` : "0";
-      html += `<tr class="g" tabindex="0" data-pk="${g.pk}"><td>${esc(fmtDate(g.date))}${g.post ? '<span class="tag">POST</span>' : ""}</td>
-        <td>${g.home ? "" : "@"}${esc(g.opp)}</td><td>${g.dec}</td><td>${esc(g.ip)}</td><td>${g.h}</td><td>${g.bb}</td><td>${g.hbp}</td><td>${g.er}</td><td>${g.k}</td><td>${hrTxt}</td><td class="sc">${g.score}${pill(g.score)}</td></tr>
-        <tr class="bd" data-for="${g.pk}" hidden><td colspan="11"><div class="breakdown">${
-          scoreParts(g).filter((pt, i) => i === 0 || pt[1] !== 0).map(([k, v]) => `<div><span>${esc(k)}</span><span class="${v >= 0 ? "p" : "m"}">${v > 0 ? "+" : ""}${v}</span></div>`).join("")
-        }<div class="tot"><span>Score</span><span>${g.score}</span></div></div>${g.hrKnown ? "" : `<div class="note" style="margin-top:6px">Couldn't check this game's play-by-play, so every home run is counted as multi-run for now.</div>`}${g.er !== g.r ? `<div class="note" style="margin-top:6px">${g.r - g.er} unearned run${g.r - g.er > 1 ? "s" : ""} not counted.</div>` : ""}</td></tr>`;
-    });
+    <div class="note">Tap a${role === "sp" ? " start" : "n outing"} to see where its points came from.</div>
+    <div class="tablewrap"><table>`;
+    if (role === "sp") {
+      html += `<thead><tr><th>Date</th><th>Opp</th><th>Dec</th><th>IP</th><th>H</th><th>BB</th><th>HBP</th><th>ER</th><th>K</th><th>HR</th><th>Score</th></tr></thead><tbody>`;
+      gs.slice().reverse().forEach(g => {
+        html += `<tr class="g" tabindex="0" data-pk="${g.pk}"><td>${esc(fmtDate(g.date))}${g.post ? '<span class="tag">POST</span>' : ""}${g.lr ? '<span class="tag">LONG RELIEF</span>' : ""}</td>
+          <td>${g.home ? "" : "@"}${esc(g.opp)}</td><td>${g.dec}</td><td>${esc(g.ip)}</td><td>${g.h}</td><td>${g.bb}</td><td>${g.hbp}</td><td>${g.er}</td><td>${g.k}</td><td>${hrCell(g)}</td><td class="sc">${g.score}${pill(g.score, T)}</td></tr>
+          <tr class="bd" data-for="${g.pk}" hidden><td colspan="11">${breakdownHTML(startParts(g), g.score)}${
+            g.lr ? note("Came in from the bullpen and went 4+ innings with no save or hold, so it's scored as a start.") : ""}${
+            g.hrKnown ? "" : note("Couldn't check this game's play-by-play, so every home run is counted as multi-run for now.")}${
+            g.er !== g.r ? note(`${g.r - g.er} unearned run${g.r - g.er > 1 ? "s" : ""} not counted.`) : ""}</td></tr>`;
+      });
+    } else {
+      html += `<thead><tr><th>Date</th><th>Opp</th><th>Entered</th><th>Result</th><th>IP</th><th>H</th><th>BB</th><th>ER</th><th>K</th><th>HR</th><th>IR</th><th>Score</th></tr></thead><tbody>`;
+      gs.slice().reverse().forEach(g => {
+        const hot = closeEntry(g) && isClean(g);
+        html += `<tr class="g" tabindex="0" data-pk="${g.pk}"><td>${esc(fmtDate(g.date))}${g.post ? '<span class="tag">POST</span>' : ""}${g.xi ? '<span class="tag">EXTRAS</span>' : ""}</td>
+          <td>${g.home ? "" : "@"}${esc(g.opp)}</td><td class="sit${hot ? " hot" : ""}">${esc(sitTxt(g))}</td><td>${g.dec}</td><td>${esc(g.ip)}</td><td>${g.h + (g.hbp ? `<span class="note"> +${g.hbp} HBP</span>` : "")}</td><td>${g.bb}</td><td>${g.er}</td><td>${g.k}</td><td>${hrCell(g)}</td><td>${g.ir ? `${g.irs}/${g.ir}` : "–"}</td><td class="sc">${g.score}${pill(g.score, T)}</td></tr>
+          <tr class="bd" data-for="${g.pk}" hidden><td colspan="12">${breakdownHTML(reliefParts(g), g.score)}${
+            closeEntry(g) && !isClean(g) ? note(`Came in ${sitTxt(g)}, but a run scored while pitching, so no close-game bonus.`) : ""}${
+            g.ctxKnown ? "" : note("Couldn't check this game's play-by-play, so the entry situation and extra innings aren't counted yet, and every home run is counted as multi-run.")}${
+            g.er !== g.r ? note(`${g.r - g.er} unearned run${g.r - g.er > 1 ? "s" : ""} not counted.`) : ""}</td></tr>`;
+      });
+    }
     html += `</tbody></table></div>`;
+    if (role === "rp") {
+      const lr = (rec.starts || []).filter(g => g.lr).length;
+      if (lr) html += `<div class="note">${lr} long relief outing${lr > 1 ? "s" : ""} (4+ innings, no save or hold) ${lr > 1 ? "are" : "is"} scored as a start and not shown here.</div>`;
+      html += `<div class="note">IR = inherited runners who scored / inherited runners. Entered = inning and score when they came in, from their team's side.</div>`;
+    }
   }
-  html += `<div><button class="btn danger" id="unfollow" type="button">Stop following ${esc(p.name)}</button></div></section>`;
+  html += `<div><button class="btn danger" id="unfollow" type="button">Stop following ${esc(p.name)} as a ${R.label}</button></div></section>`;
   $("#view").innerHTML = html;
   document.querySelectorAll("tr.g").forEach(tr => {
     const toggle = () => { const bd = document.querySelector(`tr.bd[data-for="${tr.dataset.pk}"]`); bd.hidden = !bd.hidden; };
@@ -491,45 +644,74 @@ function viewPitcher(pid) {
   const un = $("#unfollow");
   un.addEventListener("click", () => {
     if (un.dataset.confirm) {
-      pitchers = pitchers.filter(x => x.id !== pid); savePitchers(); location.hash = ""; route();
+      lists[role] = lists[role].filter(x => x.id !== pid); saveList(role); location.hash = role === "sp" ? "" : "rp"; route();
     } else { un.dataset.confirm = "1"; un.textContent = `Tap again to stop following ${p.name}`; }
   });
 }
 
+function tierTable(T, noun) {
+  return `<div class="tiertable">${T.map((t, i) => `<div><span class="pill" style="--t:var(${t.v})">${t.name}</span><span class="num">${isFinite(t.min) ? (i === 0 ? t.min + "+" : t.min + "–" + (T[i - 1].min - 1)) : "under " + T[i - 1].min}</span><span class="ex">${t.ex} · ${t.share} of ${noun}</span></div>`).join("")}</div>`;
+}
+function weightsGrid(rows) {
+  return `<div class="weights">${rows.map(([k, v]) => `<div><span>${k}</span><span class="num">${v}</span></div>`).join("")}</div>`;
+}
 function viewFormula() {
-  const rows = [
+  const sRows = [
     ["Starting value", "+40"], ["Each out", "+2"], ["Each strikeout", "+1"], ["Each hit", "−2"],
     ["Each walk", "−3"], ["Each hit batter", "−3"], ["Each earned run", "−4"],
     ["Solo home run (extra)", "−6"], ["Multi-run home run (extra)", "−8"], ["Unearned runs", "0"],
   ];
+  const rRows = [
+    ["Starting value", "+40"], ["Each out", "+3"], ["Each strikeout", "+1"], ["Each hit", "−2"],
+    ["Each walk", "−3"], ["Each hit batter", "−3"], ["Each earned run", "−6"],
+    ["Solo home run (extra)", "−8"], ["Multi-run home run (extra)", "−10"],
+    ["Inherited runner scores", "−3"], ["Inherited runner stranded", "+2"],
+    ["Save", "+10"], ["Hold", "+6"], ["Blown save", "−10"],
+    ["Each full inning after the first", "+2"], ["Pitched in extra innings", "+5"],
+    ["No baserunners (1+ inning)", "+8"], ["Unearned runs", "0"],
+  ];
+  const cRows = [["Enters tied", "+8"], ["Enters up 1", "+8"], ["Enters up 2", "+5"]];
   $("#view").innerHTML = `<section style="display:flex;flex-direction:column;gap:16px">
     <div class="crumbs"><a href="#">← All pitchers</a></div>
     <h1>How a start is scored</h1>
     <div class="formula">
       <code>40 + 2×Outs + K − 2×H − 3×BB − 3×HBP − 4×ER − 6×Solo HR − 8×Multi-run HR</code>
-      <div class="weights">${rows.map(([k, v]) => `<div><span>${k}</span><span class="num">${v}</span></div>`).join("")}</div>
+      ${weightsGrid(sRows)}
       <div class="note">A strikeout counts as an out too, so it's worth +3 in total. A home run also costs the hit and its earned runs: a solo shot is −12 in all. A perfect game with 27 strikeouts scores 121.</div>
-      <div class="note">Only starts count. Postseason starts are included and marked.</div>
+      <div class="note">Postseason starts are included and marked. A relief outing of 4+ innings with no save or hold is scored as a start too.</div>
     </div>
-    <h2>Tiers</h2>
+    <h2>Starter tiers</h2>
+    <div class="formula">${tierTable(TIERS, "starts")}
+      <div class="note">Set from all 4,858 MLB starts in the 2026 regular season. The average start scored 45.</div>
+    </div>
+    <h1 style="margin-top:12px">How a relief outing is scored</h1>
     <div class="formula">
-      <div class="tiertable">${TIERS.map((t, i) => `<div><span class="pill" style="--t:var(${t.v})">${t.name}</span><span class="num">${isFinite(t.min) ? (i === 0 ? t.min + "+" : t.min + "–" + (TIERS[i - 1].min - 1)) : "under " + TIERS[i - 1].min}</span><span class="ex">${t.ex} · ${t.share} of starts</span></div>`).join("")}</div>
-      <div class="note">Set from all 4,858 MLB starts in the 2026 regular season. The average start scored 45. The line shown for each tier is a typical start in it.</div>
+      <code>40 + 3×Outs + K − 2×H − 3×BB − 3×HBP − 6×ER − 8×Solo HR − 10×Multi-run HR − 3×IR scored + 2×IR stranded + 10 SV + 6 HLD − 10 BS + situation bonuses</code>
+      ${weightsGrid(rRows)}
+      <h3 style="margin:6px 0 0">Close-game bonus</h3>
+      ${weightsGrid(cRows)}
+      <div class="note">Only when they come in during the ${ord(LATE)} inning or later, and only if no runs score while they pitch, including runners they inherited. A save from up 3 still gets the +10 save points, just no close-game bonus.</div>
+      <div class="note">Runs and outs weigh more than for a starter because a reliever has fewer outs to make up for a mistake. A perfect save in the 9th up 1 with 2 K scores 77.</div>
+    </div>
+    <h2>Relief tiers</h2>
+    <div class="formula">${tierTable(RTIERS, "relief outings")}
+      <div class="note">Set from all 15,699 MLB relief outings in the 2026 regular season.</div>
     </div></section>`;
 }
 
 /* ---------- compare ---------- */
-let cmpSel = load("ps:cmp", null);
+const cmpSel = { sp: load("ps:cmp", null), rp: load("ps:cmp-rp", null) };
 let cmpMode = load("ps:cmpmode", "each");
-const pColor = id => `var(--c${(Math.max(0, pitchers.findIndex(p => p.id === id)) % 6) + 1})`;
+const pColor = (id, role) => `var(--c${(Math.max(0, lists[role].findIndex(p => p.id === id)) % 6) + 1})`;
 
-function compareChart(series) {
+function compareChart(series, role) {
+  const R = ROLES[role], T = R.T;
   const W2 = 700, H = 300, padL = 30, padR = 10, padT = 12, padB = 24;
   const ms = d => { const [y, m, day] = d.split("-").map(Number); return new Date(y, m - 1, day).getTime(); };
   const pts = series.map(s => {
-    const sc = s.starts.map(g => g.score);
-    return s.starts.map((g, i) => {
-      const win = sc.slice(Math.max(0, i - 4), i + 1);
+    const sc = s.games.map(g => g.score);
+    return s.games.map((g, i) => {
+      const win = sc.slice(Math.max(0, i - R.roll + 1), i + 1);
       return { t: ms(g.date), v: cmpMode === "roll" ? mean(win) : g.score, g };
     });
   });
@@ -540,8 +722,8 @@ function compareChart(series) {
   const lo = Math.min(0, Math.floor(Math.min(...vs) / 10) * 10), hi = Math.max(100, Math.ceil(Math.max(...vs) / 10) * 10);
   const x = t => padL + (t - t0) / (t1 - t0) * (W2 - padL - padR);
   const y = v => padT + (hi - v) / (hi - lo) * (H - padT - padB);
-  let s = `<svg viewBox="0 0 ${W2} ${H}" role="img" aria-label="Scores over the season for the selected pitchers">`;
-  s += tierGrid(y, lo, hi, padL, W2 - padR);
+  let s = `<svg viewBox="0 0 ${W2} ${H}" role="img" aria-label="Scores over the season for the selected ${R.title.toLowerCase()}">`;
+  s += tierGrid(y, lo, hi, padL, W2 - padR, T);
   const d0 = new Date(t0); let m = new Date(d0.getFullYear(), d0.getMonth() + 1, 1);
   while (m.getTime() <= t1) {
     const xm = x(m.getTime());
@@ -549,74 +731,81 @@ function compareChart(series) {
     s += `<text x="${xm}" y="${H - 7}" text-anchor="middle" font-size="11" fill="var(--muted)">${m.toLocaleDateString(undefined, { month: "short" })}</text>`;
     m = new Date(m.getFullYear(), m.getMonth() + 1, 1);
   }
+  const dense = role === "rp" && cmpMode !== "roll";
   series.forEach((ser, k) => {
     const p = pts[k];
-    s += `<polyline points="${p.map(q => `${x(q.t).toFixed(1)},${y(q.v).toFixed(1)}`).join(" ")}" fill="none" stroke="${ser.color}" stroke-width="${cmpMode === "roll" ? 2.4 : 1.6}" stroke-linejoin="round" stroke-linecap="round" ${cmpMode === "roll" ? "" : 'stroke-opacity=".75"'}/>`;
+    s += `<polyline points="${p.map(q => `${x(q.t).toFixed(1)},${y(q.v).toFixed(1)}`).join(" ")}" fill="none" stroke="${ser.color}" stroke-width="${cmpMode === "roll" ? 2.4 : dense ? 1 : 1.6}" stroke-linejoin="round" stroke-linecap="round" ${cmpMode === "roll" ? "" : `stroke-opacity="${dense ? ".45" : ".75"}"`}/>`;
     for (const q of p) {
-      s += `<circle cx="${x(q.t).toFixed(1)}" cy="${y(q.v).toFixed(1)}" r="${cmpMode === "roll" ? 1.8 : 3}" fill="${ser.color}"><title>${esc(ser.name)} · ${esc(fmtDate(q.g.date))} vs ${esc(q.g.opp)}: ${cmpMode === "roll" ? "5-start avg " + fmt1(q.v) + " (this start " + q.g.score + ")" : q.g.score + " (" + tier(q.g.score).name + ")"}</title></circle>`;
+      s += `<circle cx="${x(q.t).toFixed(1)}" cy="${y(q.v).toFixed(1)}" r="${cmpMode === "roll" ? 1.8 : dense ? 2.2 : 3}" fill="${ser.color}"><title>${esc(ser.name)} · ${esc(fmtDate(q.g.date))} vs ${esc(q.g.opp)}: ${cmpMode === "roll" ? R.rollTxt + " " + fmt1(q.v) + " (this " + R.one + " " + q.g.score + ")" : q.g.score + " (" + tier(q.g.score, T).name + ")"}</title></circle>`;
     }
   });
   return s + "</svg>";
 }
 
-function viewCompare() {
-  const avail = pitchers.filter(p => logCache[p.id] && logCache[p.id].starts.length);
-  if (!cmpSel) {
-    cmpSel = avail.map(p => ({ id: p.id, a: mean(logCache[p.id].starts.map(g => g.score)) }))
+function viewCompare(role) {
+  const R = ROLES[role], T = R.T;
+  const avail = lists[role].filter(p => games(p.id, role).length);
+  if (!cmpSel[role]) {
+    cmpSel[role] = avail.map(p => ({ id: p.id, a: mean(games(p.id, role).map(g => g.score)) }))
       .sort((a, b) => b.a - a.a).slice(0, 3).map(o => o.id);
   }
-  const sel = avail.filter(p => cmpSel.includes(p.id));
+  const chosen = cmpSel[role];
+  const sel = avail.filter(p => chosen.includes(p.id));
   let html = `<section style="display:flex;flex-direction:column;gap:16px">
-    <div class="crumbs"><a href="#">← All pitchers</a></div>
-    <h1>Compare pitchers</h1>`;
+    <div class="crumbs"><a href="#${role === "sp" ? "" : "rp"}">← All ${R.title.toLowerCase()}</a></div>
+    ${roleTabs(role, r => ROLES[r].cmp)}
+    <h1>Compare ${R.title.toLowerCase()}</h1>`;
   if (!avail.length) {
-    $("#view").innerHTML = html + `<div class="empty">Follow a pitcher with ${SEASON} starts to compare.</div></section>`;
+    $("#view").innerHTML = html + `<div class="empty">Follow a ${R.label} with ${SEASON} ${R.many} to compare.</div></section>`;
     return;
   }
-  html += `<div class="chips" role="group" aria-label="Pitchers to compare">${avail.map(p =>
-      `<button type="button" class="chip" style="--c:${pColor(p.id)}" aria-pressed="${cmpSel.includes(p.id)}" data-id="${p.id}"><i></i>${esc(p.name)}</button>`).join("")}</div>
+  html += `<div class="chips" role="group" aria-label="${R.title} to compare">${avail.map(p =>
+      `<button type="button" class="chip" style="--c:${pColor(p.id, role)}" aria-pressed="${chosen.includes(p.id)}" data-id="${p.id}"><i></i>${esc(p.name)}</button>`).join("")}</div>
     <div class="seg" role="group" aria-label="Chart style">
-      <button type="button" data-mode="each" aria-pressed="${cmpMode === "each"}">Each start</button>
-      <button type="button" data-mode="roll" aria-pressed="${cmpMode === "roll"}">5-start average</button>
+      <button type="button" data-mode="each" aria-pressed="${cmpMode === "each"}">Each ${R.one}</button>
+      <button type="button" data-mode="roll" aria-pressed="${cmpMode === "roll"}">${R.rollTxt[0].toUpperCase() + R.rollTxt.slice(1)}</button>
     </div>`;
   if (!sel.length) {
-    html += `<div class="empty">Pick at least one pitcher above.</div>`;
+    html += `<div class="empty">Pick at least one ${R.label} above.</div>`;
   } else {
-    const series = sel.map(p => ({ name: p.name, color: pColor(p.id), starts: logCache[p.id].starts }));
-    html += `<div class="chartbox">${compareChart(series)}
+    const series = sel.map(p => ({ name: p.name, color: pColor(p.id, role), games: games(p.id, role) }));
+    html += `<div class="chartbox">${compareChart(series, role)}
       <div class="legend">${series.map(s => `<span><i style="background:${s.color};border-radius:50%"></i>${esc(s.name)}</span>`).join("")}</div></div>
-      <div class="note">${cmpMode === "roll" ? "Each point is the average of that start and up to four before it, which smooths out single good or bad outings." : "Each point is one start. Switch to 5-start average to see trends more clearly."}</div>
+      <div class="note">${cmpMode === "roll" ? `Each point is the average of that ${R.one} and up to ${R.roll - 1} before it, which smooths out single good or bad outings.` : `Each point is one ${R.one}. Switch to ${R.rollTxt} to see trends more clearly.`}</div>
       <div class="tablewrap"><table class="ctable">
-      <thead><tr><th>Pitcher</th><th>Starts</th><th>Avg</th><th>Median</th><th>Best</th><th>Good+</th><th>Tier mix</th></tr></thead><tbody>`;
-    sel.map(p => ({ p, st: logCache[p.id].starts })).map(o => ({ ...o, sc: o.st.map(g => g.score) }))
+      <thead><tr><th>Pitcher</th><th>${role === "sp" ? "Starts" : "Outings"}</th><th>Avg</th><th>Median</th><th>Best</th><th>Good+</th>${role === "rp" ? "<th>SV</th><th>HLD</th>" : ""}<th>Tier mix</th></tr></thead><tbody>`;
+    sel.map(p => ({ p, gs: games(p.id, role) })).map(o => ({ ...o, sc: o.gs.map(g => g.score) }))
       .sort((a, b) => mean(b.sc) - mean(a.sc))
-      .forEach(({ p, sc }) => {
-        const counts = TIERS.map(t => sc.filter(v => tier(v) === t).length);
-        html += `<tr class="g" style="cursor:default"><td><i style="background:${pColor(p.id)}"></i>${esc(p.name)}</td>
-          <td>${sc.length}</td><td>${fmt1(mean(sc))} ${pill(mean(sc))}</td><td>${fmt1(median(sc))}</td><td>${Math.max(...sc)}</td>
-          <td>${Math.round(100 * sc.filter(v => v >= 55).length / sc.length)}%</td>
-          <td><div class="dist" title="${TIERS.map((t, i) => counts[i] ? `${t.name}: ${counts[i]}` : "").filter(Boolean).join(", ")}">${TIERS.map((t, i) => counts[i] ? `<span style="width:${100 * counts[i] / sc.length}%;background:var(${t.v})"></span>` : "").join("")}</div></td></tr>`;
+      .forEach(({ p, gs, sc }) => {
+        const counts = T.map(t => sc.filter(v => tier(v, T) === t).length);
+        html += `<tr class="g" style="cursor:default"><td><i style="background:${pColor(p.id, role)}"></i>${esc(p.name)}</td>
+          <td>${sc.length}</td><td>${fmt1(mean(sc))} ${pill(mean(sc), T)}</td><td>${fmt1(median(sc))}</td><td>${Math.max(...sc)}</td>
+          <td>${Math.round(100 * sc.filter(v => v >= R.good).length / sc.length)}%</td>
+          ${role === "rp" ? `<td>${gs.reduce((a, g) => a + g.sv, 0)}</td><td>${gs.reduce((a, g) => a + g.hld, 0)}</td>` : ""}
+          <td><div class="dist" title="${T.map((t, i) => counts[i] ? `${t.name}: ${counts[i]}` : "").filter(Boolean).join(", ")}">${T.map((t, i) => counts[i] ? `<span style="width:${100 * counts[i] / sc.length}%;background:var(${t.v})"></span>` : "").join("")}</div></td></tr>`;
       });
     html += `</tbody></table></div>`;
   }
   $("#view").innerHTML = html + `</section>`;
   document.querySelectorAll(".chip").forEach(b => b.addEventListener("click", () => {
     const id = Number(b.dataset.id);
-    cmpSel = cmpSel.includes(id) ? cmpSel.filter(x => x !== id) : [...cmpSel, id];
-    save("ps:cmp", cmpSel); viewCompare();
+    cmpSel[role] = chosen.includes(id) ? chosen.filter(x => x !== id) : [...chosen, id];
+    save(role === "sp" ? "ps:cmp" : "ps:cmp-rp", cmpSel[role]); viewCompare(role);
   }));
   document.querySelectorAll(".seg button").forEach(b => b.addEventListener("click", () => {
-    cmpMode = b.dataset.mode; save("ps:cmpmode", cmpMode); viewCompare();
+    cmpMode = b.dataset.mode; save("ps:cmpmode", cmpMode); viewCompare(role);
   }));
 }
 
 /* ---------- routing & refresh ---------- */
 function route() {
   const h = location.hash.slice(1);
+  let m;
   if (h === "formula") viewFormula();
-  else if (h === "compare") viewCompare();
-  else if (/^p-\d+$/.test(h)) viewPitcher(Number(h.slice(2)));
-  else viewHome();
+  else if (h === "compare" || h === "compare-rp") { curRole = h === "compare" ? "sp" : "rp"; viewCompare(curRole); }
+  else if ((m = /^([pr])-(\d+)$/.exec(h))) { curRole = m[1] === "p" ? "sp" : "rp"; viewPitcher(Number(m[2]), curRole); }
+  else { curRole = h === "rp" ? "rp" : "sp"; viewHome(curRole); }
+  $("#cmplink").href = "#" + ROLES[curRole].cmp;
   window.scrollTo(0, 0);
 }
 
@@ -628,7 +817,7 @@ async function refreshAll() {
   setStatus("Updating from MLB…");
   try { await loadTeams(); } catch {}
   const failed = [];
-  await pool(pitchers.slice(), 3, async p => {
+  await pool(allIds(), 3, async p => {
     try { await fetchPitcher(p.id); } catch { failed.push(p.name); }
   });
   refreshing = false;
