@@ -28,6 +28,9 @@
   --good: #1d6b45;
   --font-display: "Barlow Condensed", "Arial Narrow", system-ui, sans-serif;
   --font-body: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --t-elite: #6b3fc4; --t-great: #17633f; --t-good: #3a9a5b; --t-avg: #6c7a73;
+  --t-below: #b07d12; --t-poor: #cc5a1f; --t-dis: #b3261e;
+  --c1: #2563c9; --c2: #d9772b; --c3: #8a4fd1; --c4: #0f8f80; --c5: #c2407a; --c6: #5f6f0e;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
@@ -35,12 +38,18 @@
     --bg: #0e1411; --surface: #161e1a; --fg: #e6ece9; --muted: #93a39b; --line: #27322c;
     --accent: #5cc792; --accent-soft: #1b3428; --post: #e0b155; --post-soft: #33290f;
     --bad: #f08a80; --good: #5cc792; color-scheme: dark;
+    --t-elite: #b9a0f2; --t-great: #4fc489; --t-good: #93d8a9; --t-avg: #9aa7a1;
+    --t-below: #e2b453; --t-poor: #f0935c; --t-dis: #f08a80;
+    --c1: #6fa0f0; --c2: #f0a060; --c3: #b48af0; --c4: #4fd1c0; --c5: #f080b0; --c6: #b8c860;
   }
 }
 :root[data-theme="dark"] {
   --bg: #0e1411; --surface: #161e1a; --fg: #e6ece9; --muted: #93a39b; --line: #27322c;
   --accent: #5cc792; --accent-soft: #1b3428; --post: #e0b155; --post-soft: #33290f;
   --bad: #f08a80; --good: #5cc792; color-scheme: dark;
+    --t-elite: #b9a0f2; --t-great: #4fc489; --t-good: #93d8a9; --t-avg: #9aa7a1;
+    --t-below: #e2b453; --t-poor: #f0935c; --t-dis: #f08a80;
+    --c1: #6fa0f0; --c2: #f0a060; --c3: #b48af0; --c4: #4fd1c0; --c5: #f080b0; --c6: #b8c860;
 }
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
@@ -145,6 +154,30 @@ tr.bd td { text-align: left; white-space: normal; background: var(--bg); padding
 .weights { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 4px 18px; font-size: 14px; }
 .weights div { display: flex; justify-content: space-between; border-bottom: 1px dashed var(--line); padding: 3px 0; }
 .empty { padding: 28px 16px; text-align: center; color: var(--muted); }
+
+/* tiers */
+.pill { display: inline-block; font-family: var(--font-body); font-size: 11px; font-weight: 600; letter-spacing: .02em; line-height: 1.4;
+  padding: 1px 7px; border-radius: 999px; color: var(--t); background: color-mix(in srgb, var(--t) 14%, transparent); white-space: nowrap; vertical-align: 2px; }
+td.sc .pill { margin-left: 6px; }
+.tiertable { display: flex; flex-direction: column; gap: 6px; }
+.tiertable div { display: grid; grid-template-columns: 7.5em 5em minmax(0, 1fr); gap: 10px; align-items: center; font-size: 14px; }
+.tiertable .ex { color: var(--muted); font-size: 13px; }
+.tiertable .pill { justify-self: start; }
+
+/* compare */
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 5px 12px 5px 9px; cursor: pointer; font-size: 14px; }
+.chip i { width: 10px; height: 10px; border-radius: 50%; background: var(--line); }
+.chip[aria-pressed="true"] { border-color: var(--c); }
+.chip[aria-pressed="true"] i { background: var(--c); }
+.chip[aria-pressed="false"] { color: var(--muted); }
+.seg { display: inline-flex; align-self: flex-start; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button { border: 0; background: var(--surface); padding: 6px 12px; cursor: pointer; font-size: 13px; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--bg); }
+.dist { display: flex; height: 10px; width: 120px; border-radius: 3px; overflow: hidden; background: var(--line); }
+.dist span { display: block; height: 100%; }
+.ctable td:first-child { font-weight: 600; }
+.ctable td:first-child i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 7px; vertical-align: 0; }
 footer { font-size: 12px; color: var(--muted); }
 @media (prefers-reduced-motion: no-preference) { .row, tbody tr.g { transition: background .12s; } }
 </style>
@@ -155,6 +188,7 @@ footer { font-size: 12px; color: var(--muted); }
     <a class="brand" href="#">Pitch<span>Score</span></a>
     <span class="season" id="season"></span>
     <span class="spacer"></span>
+    <a class="btn" href="#compare">Compare</a>
     <a class="btn" href="#formula">Scoring</a>
     <button class="btn" id="refresh" type="button">Refresh</button>
   </header>
@@ -192,6 +226,20 @@ function scoreParts(g) {
   return parts;
 }
 function score(g) { return scoreParts(g).reduce((s, p) => s + p[1], 0); }
+
+/* Tiers set from all 4,858 MLB starts in the 2026 regular season (average start = 45). */
+const TIERS = [
+  { min: 85, name: "Elite", v: "--t-elite", share: "1%", ex: "8 IP, 2 H, 0 ER, 0 BB, 10 K" },
+  { min: 70, name: "Great", v: "--t-great", share: "10%", ex: "7 IP, 3 H, 0 ER, 1 BB, 7 K" },
+  { min: 55, name: "Good", v: "--t-good", share: "24%", ex: "6 IP, 4 H, 1 ER, 1 BB, 5 K" },
+  { min: 40, name: "Average", v: "--t-avg", share: "30%", ex: "5 IP, 5 H, 2 ER, 2 BB, 4 K" },
+  { min: 25, name: "Below Avg", v: "--t-below", share: "19%", ex: "5 IP, 5 H, 3 ER, 2 BB, 4 K" },
+  { min: 10, name: "Poor", v: "--t-poor", share: "10%", ex: "4 IP, 7 H, 5 ER, 2 BB, 3 K" },
+  { min: -Infinity, name: "Disastrous", v: "--t-dis", share: "6%", ex: "3.2 IP, 7 H, 7 ER, 2 BB, 3 K, 2 HR" },
+];
+const tier = s => TIERS.find(t => s >= t.min);
+const pill = s => { const t = tier(s); return `<span class="pill" style="--t:var(${t.v})">${t.name}</span>`; };
+const tierColor = s => `var(${tier(s).v})`;
 
 /* ---------- storage (best effort) ---------- */
 function load(key, fallback) {
@@ -298,6 +346,18 @@ function sparkline(scores) {
     <circle cx="${x(last)}" cy="${y(scores[last])}" r="2.5" fill="var(--accent)"/></svg>`;
 }
 
+/* Horizontal lines at each tier cutoff, labelled on the left. */
+function tierGrid(y, lo, hi, x1, x2) {
+  let s = "";
+  const marks = [0, ...TIERS.map(t => t.min).filter(m => isFinite(m) && m !== 0)];
+  for (const m of marks) {
+    if (m < lo || m > hi) continue;
+    s += `<line x1="${x1}" x2="${x2}" y1="${y(m)}" y2="${y(m)}" stroke="var(--line)" ${m === 0 ? "" : 'stroke-dasharray="3 3"'}/>`;
+    s += `<text x="${x1 - 6}" y="${y(m) + 4}" text-anchor="end" font-size="11" fill="var(--muted)">${m}</text>`;
+  }
+  return s;
+}
+
 function chart(starts) {
   const n = starts.length, W2 = 700, H = 220, padL = 30, padR = 8, padT = 10, padB = 22;
   const scores = starts.map(g => g.score);
@@ -306,14 +366,12 @@ function chart(starts) {
   const y = v => padT + (hi - v) / (hi - lo) * (H - padT - padB);
   const bw = (W2 - padL - padR) / n;
   let s = `<svg viewBox="0 0 ${W2} ${H}" role="img" aria-label="Score for each start this season">`;
-  for (let t = lo; t <= hi; t += 25) {
-    s += `<line x1="${padL}" x2="${W2 - padR}" y1="${y(t)}" y2="${y(t)}" stroke="var(--line)" ${t === 0 ? "" : 'stroke-dasharray="3 3"'}/>`;
-    s += `<text x="${padL - 6}" y="${y(t) + 4}" text-anchor="end" font-size="11" fill="var(--muted)">${t}</text>`;
-  }
+  s += tierGrid(y, lo, hi, padL, W2 - padR);
   starts.forEach((g, i) => {
     const x = padL + i * bw + bw * 0.15, w = bw * 0.7;
     const top = y(Math.max(0, g.score)), bot = y(Math.min(0, g.score));
-    s += `<rect x="${x.toFixed(1)}" y="${top.toFixed(1)}" width="${w.toFixed(1)}" height="${Math.max(1, bot - top).toFixed(1)}" rx="2" fill="${g.post ? "var(--post)" : "var(--accent)"}"><title>${esc(fmtDate(g.date))} vs ${esc(g.opp)}: ${g.score}</title></rect>`;
+    s += `<rect x="${x.toFixed(1)}" y="${top.toFixed(1)}" width="${w.toFixed(1)}" height="${Math.max(1, bot - top).toFixed(1)}" rx="2" fill="${tierColor(g.score)}"><title>${esc(fmtDate(g.date))} vs ${esc(g.opp)}: ${g.score} (${tier(g.score).name})</title></rect>`;
+    if (g.post) s += `<circle cx="${(x + w / 2).toFixed(1)}" cy="${(top - 6).toFixed(1)}" r="3" fill="var(--post)"/>`;
   });
   const avg = mean(scores);
   s += `<line x1="${padL}" x2="${W2 - padR}" y1="${y(avg)}" y2="${y(avg)}" stroke="var(--fg)" stroke-width="1.2"/>`;
@@ -343,7 +401,7 @@ function viewHome() {
       <span class="rank num">${isNaN(r.avg) ? "–" : i + 1}</span>
       <span class="who"><div class="nm">${esc(r.p.name)}</div><div class="sub num">${sub}</div></span>
       ${sparkline(r.sc)}
-      <span class="avg"><div class="v num">${fmt1(r.avg)}</div><div class="k">avg</div></span>
+      <span class="avg"><div class="v num">${fmt1(r.avg)}</div><div class="k">${isNaN(r.avg) ? "avg" : `<span style="color:${tierColor(r.avg)}">${tier(r.avg).name}</span>`}</div></span>
     </a>`;
   });
   html += `</div></section>
@@ -404,9 +462,10 @@ function viewPitcher(pid) {
       <div class="fact"><div class="label">Median</div><div class="v num">${fmt1(median(sc))}</div></div>
       <div class="fact"><div class="label">Best</div><div class="v num">${best.score}</div></div>
       <div class="fact"><div class="label">Worst</div><div class="v num">${worst.score}</div></div>
+      <div class="fact"><div class="label">Good or better</div><div class="v num">${Math.round(100 * st.filter(g => g.score >= 55).length / st.length)}%</div></div>
     </div>
     <div class="chartbox">${chart(st)}
-      <div class="legend"><span><i style="background:var(--accent)"></i>Regular season</span>${st.some(g => g.post) ? `<span><i style="background:var(--post)"></i>Postseason</span>` : ""}</div>
+      <div class="legend">${TIERS.map(t => `<span><i style="background:var(${t.v})"></i>${t.name}</span>`).join("")}${st.some(g => g.post) ? `<span><i style="background:var(--post);border-radius:50%"></i>Postseason</span>` : ""}</div>
     </div>
     <div class="note">Tap a start to see where its points came from.</div>
     <div class="tablewrap"><table>
@@ -415,7 +474,7 @@ function viewPitcher(pid) {
     st.slice().reverse().forEach(g => {
       const hrTxt = g.hr ? `${g.hr}<span class="note"> (${[g.solo ? g.solo + " solo" : "", g.multi ? g.multi + " multi" : ""].filter(Boolean).join(", ")}${g.hrKnown ? "" : "?"})</span>` : "0";
       html += `<tr class="g" tabindex="0" data-pk="${g.pk}"><td>${esc(fmtDate(g.date))}${g.post ? '<span class="tag">POST</span>' : ""}</td>
-        <td>${g.home ? "" : "@"}${esc(g.opp)}</td><td>${g.dec}</td><td>${esc(g.ip)}</td><td>${g.h}</td><td>${g.bb}</td><td>${g.hbp}</td><td>${g.er}</td><td>${g.k}</td><td>${hrTxt}</td><td class="sc">${g.score}</td></tr>
+        <td>${g.home ? "" : "@"}${esc(g.opp)}</td><td>${g.dec}</td><td>${esc(g.ip)}</td><td>${g.h}</td><td>${g.bb}</td><td>${g.hbp}</td><td>${g.er}</td><td>${g.k}</td><td>${hrTxt}</td><td class="sc">${g.score}${pill(g.score)}</td></tr>
         <tr class="bd" data-for="${g.pk}" hidden><td colspan="11"><div class="breakdown">${
           scoreParts(g).filter((pt, i) => i === 0 || pt[1] !== 0).map(([k, v]) => `<div><span>${esc(k)}</span><span class="${v >= 0 ? "p" : "m"}">${v > 0 ? "+" : ""}${v}</span></div>`).join("")
         }<div class="tot"><span>Score</span><span>${g.score}</span></div></div>${g.hrKnown ? "" : `<div class="note" style="margin-top:6px">Couldn't check this game's play-by-play, so every home run is counted as multi-run for now.</div>`}${g.er !== g.r ? `<div class="note" style="margin-top:6px">${g.r - g.er} unearned run${g.r - g.er > 1 ? "s" : ""} not counted.</div>` : ""}</td></tr>`;
@@ -450,14 +509,112 @@ function viewFormula() {
       <code>40 + 2×Outs + K − 2×H − 3×BB − 3×HBP − 4×ER − 6×Solo HR − 8×Multi-run HR</code>
       <div class="weights">${rows.map(([k, v]) => `<div><span>${k}</span><span class="num">${v}</span></div>`).join("")}</div>
       <div class="note">A strikeout counts as an out too, so it's worth +3 in total. A home run also costs the hit and its earned runs: a solo shot is −12 in all. A perfect game with 27 strikeouts scores 121.</div>
-      <div class="note">Only starts count. Postseason starts are included and marked. Tiers will be added later.</div>
+      <div class="note">Only starts count. Postseason starts are included and marked.</div>
+    </div>
+    <h2>Tiers</h2>
+    <div class="formula">
+      <div class="tiertable">${TIERS.map((t, i) => `<div><span class="pill" style="--t:var(${t.v})">${t.name}</span><span class="num">${isFinite(t.min) ? (i === 0 ? t.min + "+" : t.min + "–" + (TIERS[i - 1].min - 1)) : "under " + TIERS[i - 1].min}</span><span class="ex">${t.ex} · ${t.share} of starts</span></div>`).join("")}</div>
+      <div class="note">Set from all 4,858 MLB starts in the 2026 regular season. The average start scored 45. The line shown for each tier is a typical start in it.</div>
     </div></section>`;
+}
+
+/* ---------- compare ---------- */
+let cmpSel = load("ps:cmp", null);
+let cmpMode = load("ps:cmpmode", "each");
+const pColor = id => `var(--c${(Math.max(0, pitchers.findIndex(p => p.id === id)) % 6) + 1})`;
+
+function compareChart(series) {
+  const W2 = 700, H = 300, padL = 30, padR = 10, padT = 12, padB = 24;
+  const ms = d => { const [y, m, day] = d.split("-").map(Number); return new Date(y, m - 1, day).getTime(); };
+  const pts = series.map(s => {
+    const sc = s.starts.map(g => g.score);
+    return s.starts.map((g, i) => {
+      const win = sc.slice(Math.max(0, i - 4), i + 1);
+      return { t: ms(g.date), v: cmpMode === "roll" ? mean(win) : g.score, g };
+    });
+  });
+  const all = pts.flat();
+  let t0 = Math.min(...all.map(p => p.t)), t1 = Math.max(...all.map(p => p.t));
+  if (t0 === t1) { t0 -= 864e5 * 7; t1 += 864e5 * 7; }
+  const vs = all.map(p => p.v);
+  const lo = Math.min(0, Math.floor(Math.min(...vs) / 10) * 10), hi = Math.max(100, Math.ceil(Math.max(...vs) / 10) * 10);
+  const x = t => padL + (t - t0) / (t1 - t0) * (W2 - padL - padR);
+  const y = v => padT + (hi - v) / (hi - lo) * (H - padT - padB);
+  let s = `<svg viewBox="0 0 ${W2} ${H}" role="img" aria-label="Scores over the season for the selected pitchers">`;
+  s += tierGrid(y, lo, hi, padL, W2 - padR);
+  const d0 = new Date(t0); let m = new Date(d0.getFullYear(), d0.getMonth() + 1, 1);
+  while (m.getTime() <= t1) {
+    const xm = x(m.getTime());
+    s += `<line x1="${xm}" x2="${xm}" y1="${padT}" y2="${H - padB}" stroke="var(--line)" stroke-width=".6"/>`;
+    s += `<text x="${xm}" y="${H - 7}" text-anchor="middle" font-size="11" fill="var(--muted)">${m.toLocaleDateString(undefined, { month: "short" })}</text>`;
+    m = new Date(m.getFullYear(), m.getMonth() + 1, 1);
+  }
+  series.forEach((ser, k) => {
+    const p = pts[k];
+    s += `<polyline points="${p.map(q => `${x(q.t).toFixed(1)},${y(q.v).toFixed(1)}`).join(" ")}" fill="none" stroke="${ser.color}" stroke-width="${cmpMode === "roll" ? 2.4 : 1.6}" stroke-linejoin="round" stroke-linecap="round" ${cmpMode === "roll" ? "" : 'stroke-opacity=".75"'}/>`;
+    for (const q of p) {
+      s += `<circle cx="${x(q.t).toFixed(1)}" cy="${y(q.v).toFixed(1)}" r="${cmpMode === "roll" ? 1.8 : 3}" fill="${ser.color}"><title>${esc(ser.name)} · ${esc(fmtDate(q.g.date))} vs ${esc(q.g.opp)}: ${cmpMode === "roll" ? "5-start avg " + fmt1(q.v) + " (this start " + q.g.score + ")" : q.g.score + " (" + tier(q.g.score).name + ")"}</title></circle>`;
+    }
+  });
+  return s + "</svg>";
+}
+
+function viewCompare() {
+  const avail = pitchers.filter(p => logCache[p.id] && logCache[p.id].starts.length);
+  if (!cmpSel) {
+    cmpSel = avail.map(p => ({ id: p.id, a: mean(logCache[p.id].starts.map(g => g.score)) }))
+      .sort((a, b) => b.a - a.a).slice(0, 3).map(o => o.id);
+  }
+  const sel = avail.filter(p => cmpSel.includes(p.id));
+  let html = `<section style="display:flex;flex-direction:column;gap:16px">
+    <div class="crumbs"><a href="#">← All pitchers</a></div>
+    <h1>Compare pitchers</h1>`;
+  if (!avail.length) {
+    $("#view").innerHTML = html + `<div class="empty">Follow a pitcher with ${SEASON} starts to compare.</div></section>`;
+    return;
+  }
+  html += `<div class="chips" role="group" aria-label="Pitchers to compare">${avail.map(p =>
+      `<button type="button" class="chip" style="--c:${pColor(p.id)}" aria-pressed="${cmpSel.includes(p.id)}" data-id="${p.id}"><i></i>${esc(p.name)}</button>`).join("")}</div>
+    <div class="seg" role="group" aria-label="Chart style">
+      <button type="button" data-mode="each" aria-pressed="${cmpMode === "each"}">Each start</button>
+      <button type="button" data-mode="roll" aria-pressed="${cmpMode === "roll"}">5-start average</button>
+    </div>`;
+  if (!sel.length) {
+    html += `<div class="empty">Pick at least one pitcher above.</div>`;
+  } else {
+    const series = sel.map(p => ({ name: p.name, color: pColor(p.id), starts: logCache[p.id].starts }));
+    html += `<div class="chartbox">${compareChart(series)}
+      <div class="legend">${series.map(s => `<span><i style="background:${s.color};border-radius:50%"></i>${esc(s.name)}</span>`).join("")}</div></div>
+      <div class="note">${cmpMode === "roll" ? "Each point is the average of that start and up to four before it, which smooths out single good or bad outings." : "Each point is one start. Switch to 5-start average to see trends more clearly."}</div>
+      <div class="tablewrap"><table class="ctable">
+      <thead><tr><th>Pitcher</th><th>Starts</th><th>Avg</th><th>Median</th><th>Best</th><th>Good+</th><th>Tier mix</th></tr></thead><tbody>`;
+    sel.map(p => ({ p, st: logCache[p.id].starts })).map(o => ({ ...o, sc: o.st.map(g => g.score) }))
+      .sort((a, b) => mean(b.sc) - mean(a.sc))
+      .forEach(({ p, sc }) => {
+        const counts = TIERS.map(t => sc.filter(v => tier(v) === t).length);
+        html += `<tr class="g" style="cursor:default"><td><i style="background:${pColor(p.id)}"></i>${esc(p.name)}</td>
+          <td>${sc.length}</td><td>${fmt1(mean(sc))} ${pill(mean(sc))}</td><td>${fmt1(median(sc))}</td><td>${Math.max(...sc)}</td>
+          <td>${Math.round(100 * sc.filter(v => v >= 55).length / sc.length)}%</td>
+          <td><div class="dist" title="${TIERS.map((t, i) => counts[i] ? `${t.name}: ${counts[i]}` : "").filter(Boolean).join(", ")}">${TIERS.map((t, i) => counts[i] ? `<span style="width:${100 * counts[i] / sc.length}%;background:var(${t.v})"></span>` : "").join("")}</div></td></tr>`;
+      });
+    html += `</tbody></table></div>`;
+  }
+  $("#view").innerHTML = html + `</section>`;
+  document.querySelectorAll(".chip").forEach(b => b.addEventListener("click", () => {
+    const id = Number(b.dataset.id);
+    cmpSel = cmpSel.includes(id) ? cmpSel.filter(x => x !== id) : [...cmpSel, id];
+    save("ps:cmp", cmpSel); viewCompare();
+  }));
+  document.querySelectorAll(".seg button").forEach(b => b.addEventListener("click", () => {
+    cmpMode = b.dataset.mode; save("ps:cmpmode", cmpMode); viewCompare();
+  }));
 }
 
 /* ---------- routing & refresh ---------- */
 function route() {
   const h = location.hash.slice(1);
   if (h === "formula") viewFormula();
+  else if (h === "compare") viewCompare();
   else if (/^p-\d+$/.test(h)) viewPitcher(Number(h.slice(2)));
   else viewHome();
   window.scrollTo(0, 0);
