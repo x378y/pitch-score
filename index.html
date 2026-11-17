@@ -702,7 +702,7 @@ function viewPitcher(pid, role) {
     <div><h1>${esc(name)}</h1><div class="sub" style="color:var(--muted)">${esc(rec.team)} · ${SEASON} ${R.many}</div></div>`;
   if (!fol) html += `<div><button class="btn primary" id="followme" type="button">Follow ${esc(name)} as a ${R.label}</button></div>`;
   if (!gs.length) {
-    html += `<div class="empty">No ${SEASON} MLB ${R.many}.${(rec[role === "sp" ? "relief" : "starts"] || []).length ? ` Try the ${role === "sp" ? "Relievers" : "Starters"} view.` : ""}</div>`;
+    html += `<div class="empty">No ${SEASON} MLB ${R.many}.${(rec[role === "sp" ? "relief" : "starts"] || []).length ? ` Try the ${role === "sp" ? "Relievers" : "Starters"} view.` : ""}</div><div id="seasons"></div>`;
   } else {
     const facts = (label, part) => {
       const ps = scoresOf(part);
@@ -724,6 +724,7 @@ function viewPitcher(pid, role) {
     const reg = regOf(gs), post = postOf(gs);
     html += facts("Regular season", reg) + (post.length ? facts(`<span style="color:var(--post)">Postseason</span>`, post) : "");
     html += `<div class="note">Consistency is how far a typical ${R.one} lands from the average: lower is steadier. Pitches per inning shows efficiency and doesn't change the score.</div>
+    <div id="seasons"></div>
     <div class="chartbox">${chart(gs, role)}
       <div class="legend">${T.map(t => `<span><i style="background:var(${t.v})"></i>${t.name}</span>`).join("")}${gs.some(g => g.post) ? `<span><i style="background:var(--post);border-radius:50%"></i>Postseason</span>` : ""}</div>
     </div>
@@ -770,6 +771,7 @@ function viewPitcher(pid, role) {
     tr.addEventListener("click", toggle);
     tr.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } });
   });
+  fillSeasons(pid, role);
   const fb = $("#followme");
   if (fb) fb.addEventListener("click", async () => { await follow(role, pid, name); route(); });
   const un = $("#unfollow");
@@ -778,6 +780,140 @@ function viewPitcher(pid, role) {
       lists[role] = lists[role].filter(x => x.id !== pid); saveList(role); saveLogs(); location.hash = role === "sp" ? "" : "rp"; route();
     } else { un.dataset.confirm = "1"; un.textContent = `Tap again to stop following ${name}`; }
   });
+}
+
+/* ---------- season by season ---------- */
+/* One pitcher's numbers for every season. Past seasons come from the leaderboard files;
+   the season you're viewing uses the live game log when it's loaded. */
+async function allLeaders() {
+  const out = {};
+  await Promise.all(SEASONS.map(async y => { try { out[y] = await getLeaders(y); } catch {} }));
+  return out;
+}
+function liveRow(pid, role) {
+  const gs = games(pid, role); if (!gs.length) return null;
+  const reg = regOf(gs), post = postOf(gs), sc = scoresOf(reg);
+  return { n: reg.length, avg: sc.length ? mean(sc) : null, sd: sc.length >= 2 ? sdev(sc) : null, ppi: ppi(reg) || null,
+    good: sc.length ? Math.round(100 * sc.filter(v => v >= ROLES[role].good).length / sc.length) : null,
+    pn: post.length, pavg: post.length ? mean(scoresOf(post)) : null, sc,
+    sv: reg.reduce((a, g) => a + (g.sv || 0), 0), hld: reg.reduce((a, g) => a + (g.hld || 0), 0), team: logCache[pid].team, name: logCache[pid].name };
+}
+async function seasonRows(pid, role) {
+  const all = await allLeaders(), rows = [];
+  for (const y of SEASONS.slice().reverse()) {
+    const r = (y === SEASON && logCache[pid] ? liveRow(pid, role) : null) || (all[y] && all[y][role].find(x => x.id === pid));
+    if (r && (r.n || r.pn)) rows.push({ season: y, ...r });
+  }
+  return rows;
+}
+function seasonTable(rows, role, colorOf) {
+  const T = ROLES[role].T;
+  return `<div class="tablewrap"><table class="ctable">
+    <thead><tr><th>Season</th><th>Team</th><th>${role === "sp" ? "GS" : "G"}</th><th>Avg</th><th>Post</th><th>Consistency</th><th>P/inn</th><th>Good+</th>${role === "rp" ? "<th>SV</th><th>HLD</th>" : ""}<th>Tier mix</th></tr></thead><tbody>${
+    rows.map(r => {
+      const counts = T.map(t => r.sc.filter(v => tier(v, T) === t).length);
+      return `<tr class="g${colorOf ? "" : " pick"}" data-season="${r.season}" style="cursor:${colorOf ? "default" : "pointer"}"><td>${colorOf ? `<i style="background:${colorOf(r.season)}"></i>` : ""}${r.season}${r.season === SEASON ? ' <span class="note">(viewing)</span>' : ""}</td>
+        <td>${esc(r.team || "")}</td><td>${r.n}</td><td>${r.avg == null ? "–" : `${fmt1(r.avg)} ${pill(r.avg, T)}`}</td>
+        <td>${r.pn ? `${fmt1(r.pavg)} <span class="note">(${r.pn})</span>` : "–"}</td><td>${consHTML(r.sd, role)}</td><td>${fmt1(r.ppi)}</td>
+        <td>${r.good == null ? "–" : r.good + "%"}</td>${role === "rp" ? `<td>${r.sv}</td><td>${r.hld}</td>` : ""}
+        <td><div class="dist">${T.map((t, i) => counts[i] ? `<span style="width:${100 * counts[i] / r.sc.length}%;background:var(${t.v})"></span>` : "").join("")}</div></td></tr>`;
+    }).join("")}</tbody></table></div>`;
+}
+async function fillSeasons(pid, role) {
+  const box = $("#seasons"); if (!box) return;
+  const rows = await seasonRows(pid, role);
+  const el = $("#seasons"); if (!el || el !== box) return;
+  if (rows.length < 2) { el.remove(); return; }
+  el.innerHTML = `<div style="display:flex;flex-direction:column;gap:10px"><h2 style="margin:0">Season by season</h2>
+    ${seasonTable(rows, role)}
+    <div class="note">Tap a season to switch to it. <a href="#${ROLES[role].cmp}-seasons" id="cmpseasons">Compare his seasons on a chart →</a></div></div>`;
+  el.querySelectorAll("tr.pick").forEach(tr => tr.addEventListener("click", () => setSeason(Number(tr.dataset.season))));
+  $("#cmpseasons").addEventListener("click", () => { cmpSeasonPid[role] = pid; save("ps:cmpspid", cmpSeasonPid); });
+}
+
+/* Compare one pitcher across seasons: game-by-game lines lined up by game number. */
+const cmpSeasonPid = load("ps:cmpspid", { sp: null, rp: null });
+const cmpSeasonSel = {};
+const seasonColor = y => { const i = y - FIRST_SEASON; return i < 6 ? `var(--c${i + 1})` : i === 6 ? "var(--post)" : "var(--fg)"; };
+function seasonsChart(series, role) {
+  const R = ROLES[role], T = R.T;
+  const W2 = chartW(), H = Math.round(Math.min(420, Math.max(240, W2 * 0.4))), padL = 30, padR = 10, padT = 12, padB = 30;
+  const pts = series.map(s => s.sc.map((v, i) => ({ i: i + 1, v: cmpMode === "roll" ? mean(s.sc.slice(Math.max(0, i - R.roll + 1), i + 1)) : v, raw: v })));
+  const nMax = Math.max(2, ...series.map(s => s.sc.length));
+  const vs = pts.flat().map(p => p.v);
+  const lo = Math.min(0, Math.floor(Math.min(...vs) / 10) * 10), hi = Math.max(100, Math.ceil(Math.max(...vs) / 10) * 10);
+  const x = i => padL + (i - 1) / (nMax - 1) * (W2 - padL - padR);
+  const y = v => padT + (hi - v) / (hi - lo) * (H - padT - padB);
+  let s = `<svg viewBox="0 0 ${W2} ${H}" role="img" aria-label="Scores by game number for each season">`;
+  s += tierGrid(y, lo, hi, padL, W2 - padR, T);
+  const step = nMax > 60 ? 20 : nMax > 25 ? 10 : 5;
+  for (let g = step; g <= nMax; g += step) s += `<text x="${x(g)}" y="${H - 14}" text-anchor="middle" font-size="11" fill="var(--muted)">${g}</text>`;
+  s += `<text x="${(padL + W2 - padR) / 2}" y="${H - 1}" text-anchor="middle" font-size="11" fill="var(--muted)">${R.one} number</text>`;
+  const dense = nMax > 40 && cmpMode !== "roll";
+  series.forEach((ser, k) => {
+    const p = pts[k];
+    s += `<polyline points="${p.map(q => `${x(q.i).toFixed(1)},${y(q.v).toFixed(1)}`).join(" ")}" fill="none" stroke="${ser.color}" stroke-width="${cmpMode === "roll" ? 2.4 : dense ? 1 : 1.6}" stroke-linejoin="round" ${cmpMode === "roll" ? "" : `stroke-opacity="${dense ? ".45" : ".75"}"`}/>`;
+    for (const q of p) s += `<circle cx="${x(q.i).toFixed(1)}" cy="${y(q.v).toFixed(1)}" r="${cmpMode === "roll" ? 1.8 : dense ? 2.2 : 3}" fill="${ser.color}"><title>${ser.season} · ${R.one} ${q.i}: ${cmpMode === "roll" ? R.rollTxt + " " + fmt1(q.v) + " (this " + R.one + " " + q.raw + ")" : q.raw + " (" + tier(q.raw, T).name + ")"}</title></circle>`;
+  });
+  return s + "</svg>";
+}
+async function viewCompareSeasons(role) {
+  const R = ROLES[role], hashNow = location.hash;
+  const head = `<section style="display:flex;flex-direction:column;gap:16px">
+    <div class="crumbs"><a href="#${role === "sp" ? "" : "rp"}">← All ${R.title.toLowerCase()}</a></div>
+    ${roleTabs(role, r => ROLES[r].cmp + "-seasons")}
+    ${cmpKindTabs(role, "seasons")}
+    <h1>Compare seasons</h1>`;
+  const people = lists[role].slice();
+  let pid = cmpSeasonPid[role];
+  if (pid && !people.some(p => p.id === pid)) {
+    const nm = (logCache[pid] && logCache[pid].name) || "";
+    if (nm) people.push({ id: pid, name: nm }); else pid = null;
+  }
+  if (!pid && people.length) pid = people[0].id;
+  if (!pid) { $("#view").innerHTML = head + `<div class="empty">Follow a ${R.label} to compare his seasons.</div></section>`; return; }
+  $("#view").innerHTML = head + `<div class="empty">Loading seasons…</div></section>`;
+  const rows = (await seasonRows(pid, role)).filter(r => r.sc.length);
+  if (location.hash !== hashNow) return;
+  const key = role + ":" + pid;
+  if (!cmpSeasonSel[key]) cmpSeasonSel[key] = rows.slice(-3).map(r => r.season);
+  const chosen = cmpSeasonSel[key];
+  const sel = rows.filter(r => chosen.includes(r.season)).sort((a, b) => a.season - b.season);
+  let html = head + `<div class="chips" role="group" aria-label="Pitcher">${people.map(p =>
+      `<button type="button" class="chip pp" style="--c:var(--accent)" aria-pressed="${p.id === pid}" data-id="${p.id}"><i></i>${esc(p.name)}</button>`).join("")}</div>`;
+  if (!rows.length) {
+    html += `<div class="empty">No ${R.many} for this pitcher in ${FIRST_SEASON}–${CUR_SEASON}.</div>`;
+  } else {
+    html += `<div class="chips" role="group" aria-label="Seasons">${rows.map(r =>
+        `<button type="button" class="chip ss" style="--c:${seasonColor(r.season)}" aria-pressed="${chosen.includes(r.season)}" data-season="${r.season}"><i></i>${r.season}</button>`).join("")}</div>
+      <div class="seg" role="group" aria-label="Chart style">
+        <button type="button" data-mode="each" aria-pressed="${cmpMode === "each"}">Each ${R.one}</button>
+        <button type="button" data-mode="roll" aria-pressed="${cmpMode === "roll"}">${R.rollTxt[0].toUpperCase() + R.rollTxt.slice(1)}</button>
+      </div>`;
+    if (!sel.length) html += `<div class="empty">Pick at least one season above.</div>`;
+    else {
+      const series = sel.map(r => ({ season: r.season, color: seasonColor(r.season), sc: r.sc }));
+      html += `<div class="chartbox">${seasonsChart(series, role)}
+        <div class="legend">${series.map(s => `<span><i style="background:${s.color};border-radius:50%"></i>${s.season}</span>`).join("")}</div></div>
+        <div class="note">Seasons are lined up by ${R.one} number (1st ${R.one}, 2nd ${R.one}, …), regular season only. ${cmpMode === "roll" ? `Each point averages that ${R.one} and up to ${R.roll - 1} before it.` : `Switch to ${R.rollTxt} to see trends more clearly.`}</div>
+        ${seasonTable(sel, role, seasonColor)}`;
+    }
+  }
+  $("#view").innerHTML = html + `</section>`;
+  document.querySelectorAll(".chip.pp").forEach(b => b.addEventListener("click", () => {
+    cmpSeasonPid[role] = Number(b.dataset.id); save("ps:cmpspid", cmpSeasonPid); viewCompareSeasons(role);
+  }));
+  document.querySelectorAll(".chip.ss").forEach(b => b.addEventListener("click", () => {
+    const y = Number(b.dataset.season);
+    cmpSeasonSel[key] = chosen.includes(y) ? chosen.filter(v => v !== y) : [...chosen, y];
+    viewCompareSeasons(role);
+  }));
+  document.querySelectorAll(".seg button").forEach(b => b.addEventListener("click", () => {
+    cmpMode = b.dataset.mode; save("ps:cmpmode", cmpMode); viewCompareSeasons(role);
+  }));
+}
+function cmpKindTabs(role, kind) {
+  return `<nav class="seg roletabs" aria-label="What to compare"><a href="#${ROLES[role].cmp}" ${kind === "pitchers" ? 'aria-current="page"' : ""}>Pitchers in ${SEASON}</a><a href="#${ROLES[role].cmp}-seasons" ${kind === "seasons" ? 'aria-current="page"' : ""}>One pitcher's seasons</a></nav>`;
 }
 
 /* ---------- leaderboard ---------- */
@@ -947,6 +1083,7 @@ function viewCompare(role) {
   let html = `<section style="display:flex;flex-direction:column;gap:16px">
     <div class="crumbs"><a href="#${role === "sp" ? "" : "rp"}">← All ${R.title.toLowerCase()}</a></div>
     ${roleTabs(role, r => ROLES[r].cmp)}
+    ${cmpKindTabs(role, "pitchers")}
     <h1>Compare ${R.title.toLowerCase()}</h1>`;
   if (!avail.length) {
     $("#view").innerHTML = html + `<div class="empty">Follow a ${R.label} with ${SEASON} ${R.many} to compare.</div></section>`;
@@ -999,6 +1136,7 @@ function route() {
   let m;
   if (h === "formula") viewFormula();
   else if (h === "compare" || h === "compare-rp") { curRole = h === "compare" ? "sp" : "rp"; viewCompare(curRole); }
+  else if (h === "compare-seasons" || h === "compare-rp-seasons") { curRole = h === "compare-seasons" ? "sp" : "rp"; viewCompareSeasons(curRole); }
   else if (h === "leaders" || h === "leaders-rp") { curRole = h === "leaders" ? "sp" : "rp"; viewLeaders(curRole); }
   else if ((m = /^([pr])-(\d+)$/.exec(h))) { curRole = m[1] === "p" ? "sp" : "rp"; viewPitcher(Number(m[2]), curRole); }
   else { curRole = h === "rp" ? "rp" : "sp"; viewHome(curRole); }
@@ -1034,13 +1172,15 @@ async function refreshAll(force) {
 
 const sel = $("#seasonSel");
 sel.innerHTML = SEASONS.map(s => `<option value="${s}" ${s === SEASON ? "selected" : ""}>${s} season</option>`).join("");
-sel.addEventListener("change", () => {
-  SEASON = Number(sel.value);
+function setSeason(y) {
+  SEASON = y;
+  sel.value = String(y);
   save("ps:season", SEASON);
   logCache = load(logKey(), {});
   route();
   refreshAll();
-});
+}
+sel.addEventListener("change", () => setSeason(Number(sel.value)));
 $("#refresh").addEventListener("click", () => refreshAll(true));
 window.addEventListener("hashchange", route);
 /* Keep each table's header row in view while scrolling through its games. Tables can scroll
