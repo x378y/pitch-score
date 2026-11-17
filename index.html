@@ -199,6 +199,27 @@ select.btn { padding-right: 8px; }
 .ltable tr.mine td.nm a::after { content: "•"; color: var(--accent); margin-left: 5px; }
 .cons { font-size: 12px; color: var(--muted); }
 .fact .s { font-size: 12px; color: var(--muted); }
+/* Bigger screens: wider page, larger type, extra columns in the list. */
+.xst { display: none; text-align: right; }
+.xst .v { font-family: var(--font-display); font-size: 22px; font-weight: 700; line-height: 1; }
+.xst .k { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+@media (min-width: 900px) {
+  body { font-size: 16px; }
+  .wrap { max-width: 1180px; padding-left: max(32px, env(safe-area-inset-left, 0px)); padding-right: max(32px, env(safe-area-inset-right, 0px)); padding-block: 28px 64px; }
+  .brand { font-size: 36px; }
+  h1 { font-size: 42px; }
+  h2 { font-size: 26px; }
+  .row { grid-template-columns: 2.4em minmax(0, 1fr) 150px 7em 5.5em 5.5em 5em; gap: 20px; padding: 14px 18px; }
+  .xst { display: block; }
+  .spark { width: 150px; height: 36px; }
+  .who .sub { font-size: 14px; }
+  .facts { grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); }
+  .fact .v { font-size: 30px; }
+  table { font-size: 15px; }
+  th, td { padding: 10px 12px; }
+  .add { max-width: 560px; }
+}
+@media (min-width: 1500px) { .wrap { max-width: 1400px; } }
 </style>
 </head>
 <body>
@@ -541,9 +562,11 @@ function tierGrid(y, lo, hi, x1, x2, T) {
   return s;
 }
 
+/* Charts are drawn at the screen's real width so text stays the same size on every device. */
+const chartW = () => Math.round(Math.max(300, Math.min(1400, ($("#view").clientWidth || 700) - 26)));
 function chart(gs, role) {
   const T = ROLES[role].T;
-  const n = gs.length, W2 = 700, H = 220, padL = 30, padR = 8, padT = 10, padB = 22;
+  const n = gs.length, W2 = chartW(), H = Math.round(Math.min(300, Math.max(190, W2 * 0.3))), padL = 30, padR = 8, padT = 10, padB = 22;
   const scores = gs.map(g => g.score);
   const lo = Math.min(0, Math.floor(Math.min(...scores) / 25) * 25);
   const hi = Math.max(100, Math.ceil(Math.max(...scores) / 25) * 25);
@@ -596,6 +619,9 @@ function viewHome(role) {
       <span class="rank num">${isNaN(r.avg) ? "–" : i + 1}</span>
       <span class="who"><div class="nm">${esc(r.p.name)}</div><div class="sub num">${sub}</div></span>
       ${sparkline(r.sc)}
+      <span class="xst"><div class="v num">${isNaN(sdev(scoresOf(regOf(r.gs)))) ? "–" : "±" + sdev(scoresOf(regOf(r.gs))).toFixed(1)}</div><div class="k">${consName(sdev(scoresOf(regOf(r.gs))), role) || "Consistency"}</div></span>
+      <span class="xst"><div class="v num">${fmt1(ppi(regOf(r.gs)))}</div><div class="k">Pitch / inn</div></span>
+      <span class="xst"><div class="v num">${nReg ? Math.round(100 * scoresOf(regOf(r.gs)).filter(v => v >= R.good).length / nReg) + "%" : "–"}</div><div class="k">Good+</div></span>
       <span class="avg"><div class="v num">${fmt1(r.avg)}</div><div class="k">${isNaN(r.avg) ? "avg" : `<span style="color:${tierColor(r.avg, R.T)}">${tier(r.avg, R.T).name}</span>`}</div></span>
     </a>`;
   });
@@ -872,7 +898,7 @@ const pColor = (id, role) => `var(--c${(Math.max(0, lists[role].findIndex(p => p
 
 function compareChart(series, role) {
   const R = ROLES[role], T = R.T;
-  const W2 = 700, H = 300, padL = 30, padR = 10, padT = 12, padB = 24;
+  const W2 = chartW(), H = Math.round(Math.min(420, Math.max(240, W2 * 0.4))), padL = 30, padR = 10, padT = 12, padB = 24;
   const ms = d => { const [y, m, day] = d.split("-").map(Number); return new Date(y, m - 1, day).getTime(); };
   const pts = series.map(s => {
     const sc = s.games.map(g => g.score);
@@ -1016,6 +1042,15 @@ sel.addEventListener("change", () => {
 });
 $("#refresh").addEventListener("click", () => refreshAll(true));
 window.addEventListener("hashchange", route);
+let lastW = innerWidth, rsT;
+window.addEventListener("resize", () => {
+  clearTimeout(rsT);
+  rsT = setTimeout(() => {
+    if (Math.abs(innerWidth - lastW) < 40) return;   // ignore phone toolbar show/hide
+    lastW = innerWidth;
+    const y = scrollY; route(); scrollTo(0, y);
+  }, 200);
+});
 route();
 refreshAll();
 </script>
