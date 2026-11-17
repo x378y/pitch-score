@@ -139,7 +139,8 @@ h2 { font-size: 22px; }
 .tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
 table { border-collapse: collapse; width: 100%; font-size: 14px; }
 th, td { padding: 8px 8px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
-th { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--surface); }
+th { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--line); background: var(--surface); position: relative; z-index: 2; }
+th.stuck { box-shadow: 0 1px 0 var(--line), 0 6px 10px -6px rgba(0,0,0,.35); }
 th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align: left; }
 tbody tr.g { cursor: pointer; border-top: 1px solid var(--line); }
 tbody tr.g:hover { background: var(--accent-soft); }
@@ -1042,6 +1043,22 @@ sel.addEventListener("change", () => {
 });
 $("#refresh").addEventListener("click", () => refreshAll(true));
 window.addEventListener("hashchange", route);
+/* Keep each table's header row in view while scrolling through its games. Tables can scroll
+   sideways on phones, which stops CSS sticky from working, so the header cells are shifted by hand. */
+function stickHeads() {
+  for (const t of document.querySelectorAll(".tablewrap table")) {
+    const head = t.tHead; if (!head) continue;
+    const r = t.getBoundingClientRect(), hh = head.offsetHeight;
+    const off = Math.max(0, Math.min(-r.top, r.height - hh - 40));
+    for (const th of head.rows[0].cells) {
+      th.style.transform = off ? `translateY(${off}px)` : "";
+      th.classList.toggle("stuck", off > 0);
+    }
+  }
+}
+let stickQ = false;
+window.addEventListener("scroll", () => { if (!stickQ) { stickQ = true; requestAnimationFrame(() => { stickQ = false; stickHeads(); }); } }, { passive: true });
+new MutationObserver(() => stickHeads()).observe($("#view"), { childList: true, subtree: true, attributes: true, attributeFilter: ["hidden"] });
 let lastW = innerWidth, rsT;
 window.addEventListener("resize", () => {
   clearTimeout(rsT);
