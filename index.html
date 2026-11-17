@@ -83,6 +83,11 @@ header.top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .btn:hover { border-color: var(--accent); }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); }
 .btn.danger { color: var(--bad); }
+header .btn[aria-current] { border-color: var(--accent); background: var(--accent-soft); }
+header.top .spacer { flex-basis: 100%; height: 0; }
+header.top .brand, header.top select { order: -2; }
+#refresh { order: -1; margin-left: auto; }
+@media (max-width: 440px) { header.top { gap: 6px; } header.top .btn:not(select) { padding: 6px 8px; font-size: 13px; } header.top select { padding: 5px 4px; font-size: 11px; } }
 .status { font-size: 13px; color: var(--muted); min-height: 1.5em; }
 .status.err { color: var(--bad); }
 
@@ -202,9 +207,10 @@ select.btn { padding-right: 8px; }
     <a class="brand" href="#">Pitch<span>Score</span></a>
     <select class="btn season" id="seasonSel" aria-label="Season"></select>
     <span class="spacer"></span>
+    <a class="btn" href="#" id="homelink">Following</a>
     <a class="btn" href="#leaders" id="leadlink">Leaders</a>
     <a class="btn" href="#compare" id="cmplink">Compare</a>
-    <a class="btn" href="#formula">Scoring</a>
+    <a class="btn" href="#formula" id="fmlink">Scoring</a>
     <button class="btn" id="refresh" type="button">Refresh</button>
   </header>
   <div class="status" id="status" role="status"></div>
@@ -971,6 +977,9 @@ function route() {
   else { curRole = h === "rp" ? "rp" : "sp"; viewHome(curRole); }
   $("#cmplink").href = "#" + ROLES[curRole].cmp;
   $("#leadlink").href = "#" + ROLES[curRole].lead;
+  $("#homelink").href = curRole === "rp" ? "#rp" : "#";
+  const here = h === "" || h === "rp" ? "homelink" : /^leaders/.test(h) ? "leadlink" : /^compare/.test(h) ? "cmplink" : h === "formula" ? "fmlink" : "";
+  for (const id of ["homelink", "leadlink", "cmplink", "fmlink"]) $("#" + id).toggleAttribute("aria-current", id === here);
   window.scrollTo(0, 0);
 }
 
