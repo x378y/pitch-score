@@ -199,6 +199,7 @@ select.btn { padding-right: 8px; }
 .ltable td.nm .sub { color: var(--muted); font-size: 12px; margin-left: 6px; font-weight: 400; }
 .ltable tr.mine td.nm a::after { content: "•"; color: var(--accent); margin-left: 5px; }
 .cons { font-size: 12px; color: var(--muted); }
+.pct { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; margin-left: 4px; }
 .fact .s { font-size: 12px; color: var(--muted); }
 /* Bigger screens: wider page, larger type, extra columns in the list. */
 .xst { display: none; text-align: right; }
@@ -531,6 +532,37 @@ const maxOr = a => a.length ? Math.max(...a) : "–";
 const minOr = a => a.length ? Math.min(...a) : "–";
 /* Pitch efficiency: pitches thrown per inning (3 outs). Doesn't affect the score. */
 const ppi = gs => { const o = gs.reduce((a, g) => a + g.outs, 0), n = gs.reduce((a, g) => a + g.np, 0); return o && n ? n / (o / 3) : NaN; };
+/* Percentiles: where a game score or a season average ranks in that season, from the leaderboard
+   files. Games are ranked against every regular-season game by that role; averages against qualified pitchers. */
+const pctCache = {}, pctLoading = {};
+function buildPct(d, season) {
+  const out = {};
+  for (const role of ["sp", "rp"]) {
+    const games = [], avgs = [];
+    for (const r of d[role] || []) { for (const v of r.sc) games.push(v); if (r.n >= ROLES[role].min(season) && r.avg != null) avgs.push(r.avg); }
+    games.sort((a, b) => a - b); avgs.sort((a, b) => a - b);
+    out[role] = { games, avgs };
+  }
+  return out;
+}
+function bound(a, v, strict) { let lo = 0, hi = a.length; while (lo < hi) { const m = (lo + hi) >> 1; if (strict ? a[m] < v : a[m] <= v) lo = m + 1; else hi = m; } return lo; }
+function pct(season, role, kind, v) {
+  if (v == null || isNaN(v)) return null;
+  if (!pctCache[season] && leaderData[season]) pctCache[season] = buildPct(leaderData[season], season);
+  const p = pctCache[season];
+  if (!p) {
+    if (!pctLoading[season]) {
+      pctLoading[season] = true;
+      getLeaders(season).then(() => { if (season === SEASON && !/^#leaders/.test(location.hash)) { const y = scrollY; route(); scrollTo(0, y); } }).catch(() => {});
+    }
+    return null;
+  }
+  const a = p[role][kind]; if (!a.length) return null;
+  const lo = bound(a, v, true), hi = bound(a, v, false);
+  return Math.min(99, Math.max(1, Math.round(100 * (lo + (hi - lo) / 2) / a.length)));
+}
+const pctTxt = p => p == null ? "" : `${ord(p)} pct`;
+const pctTag = p => p == null ? "" : ` <span class="pct">${ord(p)}</span>`;
 const consHTML = (sd, role) => isNaN(sd) || sd == null ? "–" : `±${sd.toFixed(1)} <span class="cons">${consName(sd, role)}</span>`;
 
 function roleTabs(role, hashFor) {
@@ -623,7 +655,7 @@ function viewHome(role) {
       <span class="xst"><div class="v num">${isNaN(sdev(scoresOf(regOf(r.gs)))) ? "–" : "±" + sdev(scoresOf(regOf(r.gs))).toFixed(1)}</div><div class="k">${consName(sdev(scoresOf(regOf(r.gs))), role) || "Consistency"}</div></span>
       <span class="xst"><div class="v num">${fmt1(ppi(regOf(r.gs)))}</div><div class="k">Pitch / inn</div></span>
       <span class="xst"><div class="v num">${nReg ? Math.round(100 * scoresOf(regOf(r.gs)).filter(v => v >= R.good).length / nReg) + "%" : "–"}</div><div class="k">Good+</div></span>
-      <span class="avg"><div class="v num">${fmt1(r.avg)}</div><div class="k">${isNaN(r.avg) ? "avg" : `<span style="color:${tierColor(r.avg, R.T)}">${tier(r.avg, R.T).name}</span>`}</div></span>
+      <span class="avg"><div class="v num">${fmt1(r.avg)}</div><div class="k">${isNaN(r.avg) ? "avg" : `<span style="color:${tierColor(r.avg, R.T)}">${tier(r.avg, R.T).name}</span>`}</div>${isNaN(r.avg) || pct(SEASON, role, "avgs", r.avg) == null ? "" : `<div class="k">${pctTxt(pct(SEASON, role, "avgs", r.avg))}</div>`}</span>
     </a>`;
   });
   html += `</div></section>
@@ -711,7 +743,7 @@ function viewPitcher(pid, role) {
       const sd = sdev(ps);
       return `<h2 style="margin:0">${label}</h2><div class="facts">
       <div class="fact"><div class="label">${role === "sp" ? "Starts" : "Outings"}</div><div class="v num">${part.length}</div></div>
-      <div class="fact"><div class="label">Average</div><div class="v num">${fmt1(mean(ps))}</div></div>
+      <div class="fact"><div class="label">Average</div><div class="v num">${fmt1(mean(ps))}</div>${label === "Regular season" && ps.length ? `<div class="s">${pctTxt(pct(SEASON, role, "avgs", mean(ps))) || "&nbsp;"}</div>` : ""}</div>
       <div class="fact"><div class="label">Median</div><div class="v num">${fmt1(median(ps))}</div></div>
       <div class="fact"><div class="label">Best</div><div class="v num">${maxOr(ps)}</div></div>
       <div class="fact"><div class="label">Worst</div><div class="v num">${minOr(ps)}</div></div>
@@ -723,7 +755,7 @@ function viewPitcher(pid, role) {
     };
     const reg = regOf(gs), post = postOf(gs);
     html += facts("Regular season", reg) + (post.length ? facts(`<span style="color:var(--post)">Postseason</span>`, post) : "");
-    html += `<div class="note">Consistency is how far a typical ${R.one} lands from the average: lower is steadier. Pitches per inning shows efficiency and doesn't change the score.</div>
+    html += `<div class="note">Consistency is how far a typical ${R.one} lands from the average: lower is steadier. Pitches per inning shows efficiency and doesn't change the score. Percentiles rank against the whole league that season: a game against every ${SEASON} ${R.one}, the average against qualified ${R.title.toLowerCase()} (${R.min(SEASON)}+ ${R.many}). 90th means better than 90%.</div>
     <div id="seasons"></div>
     <div class="chartbox">${chart(gs, role)}
       <div class="legend">${T.map(t => `<span><i style="background:var(${t.v})"></i>${t.name}</span>`).join("")}${gs.some(g => g.post) ? `<span><i style="background:var(--post);border-radius:50%"></i>Postseason</span>` : ""}</div>
@@ -734,7 +766,7 @@ function viewPitcher(pid, role) {
       html += `<thead><tr><th>Date</th><th>Opp</th><th>Dec</th><th>IP</th><th>H</th><th>BB</th><th>HBP</th><th>ER</th><th>K</th><th>HR</th><th>Pitches</th><th>Score</th></tr></thead><tbody>`;
       gs.slice().reverse().forEach(g => {
         html += `<tr class="g" tabindex="0" data-pk="${g.pk}"><td>${esc(fmtDate(g.date))}${g.post ? '<span class="tag">POST</span>' : ""}${g.lr ? '<span class="tag">LONG RELIEF</span>' : ""}</td>
-          <td>${g.home ? "" : "@"}${esc(g.opp)}</td><td>${g.dec}</td><td>${esc(g.ip)}</td><td>${g.h}</td><td>${g.bb}</td><td>${g.hbp}</td><td>${g.er}</td><td>${g.k}</td><td>${hrCell(g)}</td><td>${pCell(g)}</td><td class="sc">${g.score}${pill(g.score, T)}</td></tr>
+          <td>${g.home ? "" : "@"}${esc(g.opp)}</td><td>${g.dec}</td><td>${esc(g.ip)}</td><td>${g.h}</td><td>${g.bb}</td><td>${g.hbp}</td><td>${g.er}</td><td>${g.k}</td><td>${hrCell(g)}</td><td>${pCell(g)}</td><td class="sc">${g.score}${pill(g.score, T)}${pctTag(pct(SEASON, role, "games", g.score))}</td></tr>
           <tr class="bd" data-for="${g.pk}" hidden><td colspan="12">${breakdownHTML(startParts(g), g.score)}${
             g.lr ? note("Came in from the bullpen and went 4+ innings with no save or hold, so it's scored as a start.") : ""}${
             g.hrKnown ? "" : note("Couldn't check this game's play-by-play, so every home run is counted as multi-run for now.")}${
@@ -745,7 +777,7 @@ function viewPitcher(pid, role) {
       gs.slice().reverse().forEach(g => {
         const hot = closeEntry(g) && isClean(g);
         html += `<tr class="g" tabindex="0" data-pk="${g.pk}"><td>${esc(fmtDate(g.date))}${g.post ? '<span class="tag">POST</span>' : ""}${g.opener ? '<span class="tag">OPENER</span>' : ""}${g.xi ? '<span class="tag">EXTRAS</span>' : ""}</td>
-          <td>${g.home ? "" : "@"}${esc(g.opp)}</td><td class="sit${hot ? " hot" : ""}">${esc(sitTxt(g))}</td><td>${g.dec}</td><td>${esc(g.ip)}</td><td>${g.h + (g.hbp ? `<span class="note"> +${g.hbp} HBP</span>` : "")}</td><td>${g.bb}</td><td>${g.er}</td><td>${g.k}</td><td>${hrCell(g)}</td><td>${g.ir ? `${g.irs}/${g.ir}` : "–"}</td><td>${pCell(g)}</td><td class="sc">${g.score}${pill(g.score, T)}</td></tr>
+          <td>${g.home ? "" : "@"}${esc(g.opp)}</td><td class="sit${hot ? " hot" : ""}">${esc(sitTxt(g))}</td><td>${g.dec}</td><td>${esc(g.ip)}</td><td>${g.h + (g.hbp ? `<span class="note"> +${g.hbp} HBP</span>` : "")}</td><td>${g.bb}</td><td>${g.er}</td><td>${g.k}</td><td>${hrCell(g)}</td><td>${g.ir ? `${g.irs}/${g.ir}` : "–"}</td><td>${pCell(g)}</td><td class="sc">${g.score}${pill(g.score, T)}${pctTag(pct(SEASON, role, "games", g.score))}</td></tr>
           <tr class="bd" data-for="${g.pk}" hidden><td colspan="13">${breakdownHTML(reliefParts(g), g.score)}${
             g.opener ? note("Started the game but went under 2 innings and under 40 pitches, and he relieves more than he starts, so it's scored as a relief outing.") : ""}${
             g.sched && g.sched !== 9 ? note(`A ${g.sched}-inning game, so the close-game bonus starts in the ${ord(lateInning(g))} and extra innings start in the ${ord(g.sched + 1)}.`) : ""}${
@@ -813,7 +845,7 @@ function seasonTable(rows, role, colorOf) {
     rows.map(r => {
       const counts = T.map(t => r.sc.filter(v => tier(v, T) === t).length);
       return `<tr class="g${colorOf ? "" : " pick"}" data-season="${r.season}" style="cursor:${colorOf ? "default" : "pointer"}"><td>${colorOf ? `<i style="background:${colorOf(r.season)}"></i>` : ""}${r.season}${r.season === SEASON ? ' <span class="note">(viewing)</span>' : ""}</td>
-        <td>${esc(r.team || "")}</td><td>${r.n}</td><td>${r.avg == null ? "–" : `${fmt1(r.avg)} ${pill(r.avg, T)}`}</td>
+        <td>${esc(r.team || "")}</td><td>${r.n}</td><td>${r.avg == null ? "–" : `${fmt1(r.avg)} ${pill(r.avg, T)}${pctTag(pct(r.season, role, "avgs", r.avg))}`}</td>
         <td>${r.pn ? `${fmt1(r.pavg)} <span class="note">(${r.pn})</span>` : "–"}</td><td>${consHTML(r.sd, role)}</td><td>${fmt1(r.ppi)}</td>
         <td>${r.good == null ? "–" : r.good + "%"}</td>${role === "rp" ? `<td>${r.sv}</td><td>${r.hld}</td>` : ""}
         <td><div class="dist">${T.map((t, i) => counts[i] ? `<span style="width:${100 * counts[i] / r.sc.length}%;background:var(${t.v})"></span>` : "").join("")}</div></td></tr>`;
@@ -957,7 +989,7 @@ async function viewLeaders(role) {
   rows.forEach((r, i) => {
     html += `<tr class="g${followed(r.id) ? " mine" : ""}" style="cursor:default"><td class="num">${i + 1}</td>
       <td class="nm"><a href="#${R.page}-${r.id}">${esc(r.name)}</a><span class="sub">${esc(r.team)}</span></td>
-      <td>${r.n}</td><td>${r.avg == null ? "–" : `${fmt1(r.avg)} ${pill(r.avg, T)}`}</td>
+      <td>${r.n}</td><td>${r.avg == null ? "–" : `${fmt1(r.avg)} ${pill(r.avg, T)}${pctTag(pct(season, role, "avgs", r.avg))}`}</td>
       <td>${r.pn ? `${fmt1(r.pavg)} <span class="note">(${r.pn})</span>` : "–"}</td>
       <td>${consHTML(r.sd, role)}</td><td>${fmt1(r.ppi)}</td><td>${r.good == null ? "–" : r.good + "%"}</td>
       ${role === "rp" ? `<td>${r.sv}</td><td>${r.hld}</td>` : ""}</tr>`;
@@ -1109,7 +1141,7 @@ function viewCompare(role) {
       .forEach(({ p, gs, sc, post }) => {
         const counts = T.map(t => sc.filter(v => tier(v, T) === t).length);
         html += `<tr class="g" style="cursor:default"><td><i style="background:${pColor(p.id, role)}"></i>${esc(p.name)}</td>
-          <td>${sc.length}</td><td>${sc.length ? fmt1(mean(sc)) + " " + pill(mean(sc), T) : "–"}</td>
+          <td>${sc.length}</td><td>${sc.length ? fmt1(mean(sc)) + " " + pill(mean(sc), T) + pctTag(pct(SEASON, role, "avgs", mean(sc))) : "–"}</td>
           <td>${post.length ? `${fmt1(mean(post))} <span class="note">(${post.length})</span>` : "–"}</td>
           <td>${consHTML(sdev(sc), role)}</td><td>${fmt1(ppi(gs))}</td>
           <td>${fmt1(median(sc))}</td><td>${maxOr(sc)}</td>
